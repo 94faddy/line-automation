@@ -240,6 +240,34 @@ app.get("/api/instances/:deviceId/status", (req, res) => {
   }
 });
 
+// ==================== API: SAVED STATE ====================
+
+app.get("/api/instances/:deviceId/saved-state", (req, res) => {
+  const deviceId = decodeURIComponent(req.params.deviceId);
+  const instance = multiManager.getInstance(deviceId);
+  if (instance) {
+    const stateInfo = instance.lineController.getSavedStateInfo();
+    res.json({ 
+      success: true, 
+      hasSavedState: !!stateInfo,
+      state: stateInfo 
+    });
+  } else {
+    res.json({ success: false, error: "Instance not found" });
+  }
+});
+
+app.post("/api/instances/:deviceId/clear-state", (req, res) => {
+  const deviceId = decodeURIComponent(req.params.deviceId);
+  const instance = multiManager.getInstance(deviceId);
+  if (instance) {
+    instance.lineController.clearState();
+    res.json({ success: true, message: "State cleared" });
+  } else {
+    res.json({ success: false, error: "Instance not found" });
+  }
+});
+
 // ==================== API: LOGS ====================
 
 app.get("/api/logs", (req, res) => {

@@ -294,21 +294,20 @@ class LineController {
    * ส่งข้อความหาเพื่อนทั้งหมด
    */
   async sendToAllFriends(message, totalFriends, options = {}) {
-    const { startFrom = 0, limit = 0, sendAll = false, speed = 'fast' } = options;
+    const { startFrom = 0, limit = 0, sendAll = false, speed = 'fast', forceRestart = false } = options;
     
     this.setSpeed(speed);
     this.isRunning = true;
     this.shouldStop = false;
     
-    // ==================== RESTART LINE ก่อนเริ่ม ====================
+    // ==================== RESTART LINE ====================
     this.log("========== PREPARING TO SEND ==========", "info");
     
-    // 1. Restart LINE ทุกครั้งก่อนส่ง (แก้ปัญหาหน้าแชทค้าง)
     if (this.restartLineBeforeSend) {
       await this.restartLine();
     }
     
-    // 2. เช็ค clipper service
+    // เช็ค clipper service
     this.log("Checking clipper service...");
     const clipperCheck = this.adb.checkClipperService();
     if (!clipperCheck.available) {
@@ -317,7 +316,9 @@ class LineController {
       this.log("✓ Clipper service is available", "success");
     }
 
+    // ==================== DETECT FRIENDS COUNT (ทุกครั้ง) ====================
     let actualTotalFriends = totalFriends;
+    
     if (sendAll || totalFriends >= 9999) {
       this.log("Detecting actual friends count...", "info");
       
@@ -331,7 +332,7 @@ class LineController {
       
       if (detectedCount > 0) {
         actualTotalFriends = detectedCount;
-        this.log(`Detected ${actualTotalFriends} friends`, "success");
+        this.log(`✓ Detected ${actualTotalFriends} friends`, "success");
         this.emitStatus({ type: "friends-detected", count: actualTotalFriends });
       } else {
         this.log("Could not detect friends count", "error");
@@ -344,30 +345,78 @@ class LineController {
       await this.wait(700);
       await this.goHome();
       await this.wait(700);
-      
-      this.currentIndex = 0;
-      this.sentFriends = [];
-      this.failedFriends = [];
-      this.clearState();
     } else {
-      const savedState = this.loadState();
-      if (savedState && savedState.currentIndex > 0 && startFrom === 0) {
-        if (savedState.currentIndex < totalFriends) {
-          this.currentIndex = savedState.currentIndex;
-          this.sentFriends = savedState.sentFriends || [];
-          this.failedFriends = savedState.failedFriends || [];
-          this.log(`Resuming from friend #${this.currentIndex + 1}`, "info");
-        } else {
-          this.currentIndex = startFrom;
+      actualTotalFriends = totalFriends;
+    }
+
+    // ==================== CHECK SAVED STATE ====================
+    const savedState = this.loadState();
+    let resumeFromSaved = false;
+    
+    if (savedState && savedState.currentIndex > 0 && !forceRestart) {
+      this.log(``, "info");
+      this.log(`📋 Found saved state:`, "info");
+      this.log(`   Previous: ${savedState.currentIndex}/${savedState.totalFriends} friends sent`, "info");
+      this.log(`   Current:  ${actualTotalFriends} friends detected now`, "info");
+      this.log(`   ✅ Success: ${savedState.sentFriends?.length || 0}, ❌ Failed: ${savedState.failedFriends?.length || 0}`, "info");
+      this.log(`   Last updated: ${savedState.lastUpdated}`, "info");
+      
+      // ตรวจสอบว่าส่งครบแล้วหรือยัง
+      if (savedState.currentIndex >= actualTotalFriends) {
+        // ส่งครบแล้ว → เริ่มใหม่
+        this.log(``, "info");
+        this.log(`✅ Previous session completed (${savedState.currentIndex}/${savedState.totalFriends})`, "success");
+        this.log(`🔄 Starting fresh from friend #1...`, "info");
+        this.currentIndex = 0;
+        this.sentFriends = [];
+        this.failedFriends = [];
+        this.clearState();
+      }
+      // ตรวจสอบว่าจำนวนเพื่อนเปลี่ยนหรือไม่
+      else if (savedState.totalFriends !== actualTotalFriends) {
+        this.log(``, "warn");
+        this.log(`⚠️ Friends count changed: ${savedState.totalFriends} → ${actualTotalFriends}`, "warn");
+        
+        if (actualTotalFriends < savedState.currentIndex) {
+          // เพื่อนน้อยกว่าที่ส่งไปแล้ว → ต้องเริ่มใหม่
+          this.log(`⚠️ Friends count (${actualTotalFriends}) < sent count (${savedState.currentIndex})`, "warn");
+          this.log(`🔄 Starting fresh from friend #1`, "info");
+          this.currentIndex = 0;
           this.sentFriends = [];
           this.failedFriends = [];
           this.clearState();
+        } else {
+          // เพื่อนยังมากพอ → resume ได้
+          this.log(`✓ Can still resume from friend #${savedState.currentIndex + 1}`, "info");
+          this.currentIndex = savedState.currentIndex;
+          this.sentFriends = savedState.sentFriends || [];
+          this.failedFriends = savedState.failedFriends || [];
+          resumeFromSaved = true;
         }
       } else {
-        this.currentIndex = startFrom;
-        this.sentFriends = [];
-        this.failedFriends = [];
+        // จำนวนเพื่อนเท่าเดิม และยังไม่ครบ → resume ปกติ
+        this.currentIndex = savedState.currentIndex;
+        this.sentFriends = savedState.sentFriends || [];
+        this.failedFriends = savedState.failedFriends || [];
+        resumeFromSaved = true;
       }
+      
+      if (resumeFromSaved) {
+        this.log(``, "info");
+        this.log(`🔄 Resuming from friend #${this.currentIndex + 1}...`, "info");
+        this.emitStatus({ 
+          type: "resume", 
+          currentIndex: this.currentIndex, 
+          totalFriends: actualTotalFriends,
+          sentCount: this.sentFriends.length,
+          failedCount: this.failedFriends.length
+        });
+      }
+    } else {
+      // ไม่มี saved state → เริ่มใหม่
+      this.currentIndex = startFrom;
+      this.sentFriends = [];
+      this.failedFriends = [];
     }
     
     this.totalFriends = actualTotalFriends;
@@ -507,6 +556,33 @@ class LineController {
       sentFriends: state?.sentFriends || [],
       failedFriends: state?.failedFriends || [],
       lastUpdated: state?.lastUpdated,
+      hasSavedState: !!(state && state.currentIndex > 0),
+    };
+  }
+
+  /**
+   * ตรวจสอบว่ามี state ที่บันทึกไว้หรือไม่
+   */
+  hasSavedState() {
+    const state = this.loadState();
+    return state && state.currentIndex > 0 && state.currentIndex < state.totalFriends;
+  }
+
+  /**
+   * ดึงข้อมูล saved state
+   */
+  getSavedStateInfo() {
+    const state = this.loadState();
+    if (!state || state.currentIndex === 0) {
+      return null;
+    }
+    return {
+      currentIndex: state.currentIndex,
+      totalFriends: state.totalFriends,
+      sentCount: state.sentFriends?.length || 0,
+      failedCount: state.failedFriends?.length || 0,
+      lastUpdated: state.lastUpdated,
+      remaining: state.totalFriends - state.currentIndex
     };
   }
 }

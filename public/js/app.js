@@ -1,20 +1,93 @@
-// LINE Web Automation Frontend - Multi Instance with Progress Modal
-// รองรับ Unicode/Thai/Emoji/URL และ Speed Settings
+// LINE Web Automation Frontend v3.2
 
 const socket = io();
 let instances = [];
 let sendingProgress = {
   isRunning: false,
+  isPaused: false,
   current: 0,
   total: 0,
   sent: [],
   failed: []
 };
 
+// ==================== BUTTON STATE MANAGEMENT ====================
+
+function updateButtonStates() {
+  const btnStart = document.getElementById("btn-start");
+  const btnPause = document.getElementById("btn-pause");
+  const btnResume = document.getElementById("btn-resume");
+  const btnStop = document.getElementById("btn-stop");
+  const btnReset = document.getElementById("btn-reset");
+  const btnRefresh = document.querySelector('[onclick="refreshInstances()"]');
+  
+  const isRunning = sendingProgress.isRunning;
+  const isPaused = sendingProgress.isPaused;
+  
+  if (isRunning && !isPaused) {
+    // กำลังส่งอยู่ (ไม่ได้พัก)
+    btnStart.disabled = true;
+    btnStart.classList.replace("btn-success", "btn-secondary");
+    
+    btnPause.disabled = false;
+    btnPause.classList.replace("btn-secondary", "btn-warning");
+    
+    btnResume.disabled = true;
+    btnResume.classList.replace("btn-info", "btn-secondary");
+    
+    btnStop.disabled = false;
+    btnStop.classList.replace("btn-secondary", "btn-danger");
+    
+    btnReset.disabled = true;
+    btnReset.classList.add("btn-secondary");
+    
+    if (btnRefresh) btnRefresh.disabled = true;
+    
+  } else if (isRunning && isPaused) {
+    // พักอยู่
+    btnStart.disabled = true;
+    btnStart.classList.replace("btn-success", "btn-secondary");
+    
+    btnPause.disabled = true;
+    btnPause.classList.replace("btn-warning", "btn-secondary");
+    
+    btnResume.disabled = false;
+    btnResume.classList.replace("btn-secondary", "btn-info");
+    
+    btnStop.disabled = false;
+    btnStop.classList.replace("btn-secondary", "btn-danger");
+    
+    btnReset.disabled = true;
+    btnReset.classList.add("btn-secondary");
+    
+    if (btnRefresh) btnRefresh.disabled = true;
+    
+  } else {
+    // ไม่ได้ทำงาน (พร้อมส่ง)
+    btnStart.disabled = false;
+    btnStart.classList.replace("btn-secondary", "btn-success");
+    
+    btnPause.disabled = true;
+    btnPause.classList.replace("btn-warning", "btn-secondary");
+    
+    btnResume.disabled = true;
+    btnResume.classList.replace("btn-info", "btn-secondary");
+    
+    btnStop.disabled = true;
+    btnStop.classList.replace("btn-danger", "btn-secondary");
+    
+    btnReset.disabled = false;
+    btnReset.classList.remove("btn-secondary");
+    
+    if (btnRefresh) btnRefresh.disabled = false;
+  }
+}
+
 // ==================== SOCKET EVENTS ====================
 
 socket.on("connect", () => {
   addLog("เชื่อมต่อ server สำเร็จ", "info");
+  updateButtonStates();
 });
 
 socket.on("disconnect", () => {
@@ -25,6 +98,8 @@ socket.on("init", (data) => {
   instances = data.instances || [];
   renderInstances();
   renderInstanceSettings();
+  checkSavedState();
+  updateButtonStates();
 });
 
 socket.on("instances", (data) => {
@@ -41,123 +116,50 @@ socket.on("status", (data) => {
   handleStatusUpdate(data);
 });
 
-socket.on("multi-start", (data) => {
-  addLog(`เริ่มส่งจาก ${data.totalInstances} instances`, "info");
-});
-
 socket.on("multi-complete", (data) => {
   addLog(`เสร็จสิ้น: ${data.successMessages}/${data.totalMessages} ข้อความ`, "success");
   completeProgress();
 });
 
-socket.on("instance-updated", (data) => {
-  const idx = instances.findIndex(i => i.deviceId === data.deviceId);
-  if (idx !== -1) {
-    instances[idx] = data;
-    renderInstances();
-    renderInstanceSettings();
-  }
-});
-
 // ==================== RENDER FUNCTIONS ====================
 
 function renderInstances() {
-  const container = document.getElementById("instances-list");
+  const container = document.getElementById("instance-badges");
   
   if (instances.length === 0) {
-    container.innerHTML = `
-      <div class="text-center p-3 text-muted">
-        <i class="bi bi-phone-vibrate"></i>
-        <p class="mb-0">ไม่พบ instance</p>
-        <small>เปิด BlueStacks แล้วกด Refresh</small>
-      </div>
-    `;
+    container.innerHTML = `<span class="badge bg-secondary">ไม่พบ instance</span>`;
     return;
   }
 
   container.innerHTML = instances.map((inst, idx) => {
-    let statusClass = "bg-secondary";
-    let statusText = inst.lineStatusText || "Unknown";
-    
-    switch (inst.status) {
-      case "ready":
-        statusClass = "bg-success";
-        break;
-      case "background":
-        statusClass = "bg-warning";
-        break;
-      case "stopped":
-        statusClass = "bg-secondary";
-        break;
-      case "no-line":
-        statusClass = "bg-danger";
-        break;
-    }
+    let cls = "instance-badge";
+    if (inst.status === "ready") cls += " ready";
+    else if (inst.status === "no-line") cls += " offline";
     
     return `
-      <div class="instance-item" data-device="${inst.deviceId}">
-        <div class="d-flex justify-content-between align-items-center p-2 border-bottom">
-          <div>
-            <strong><i class="bi bi-phone"></i> #${idx + 1}</strong>
-            <br>
-            <small class="text-muted">${inst.deviceId}</small>
-          </div>
-          <div class="text-end">
-            <span class="badge ${statusClass}">${statusText}</span>
-          </div>
-        </div>
-      </div>
+      <span class="${cls}">
+        <i class="bi bi-phone"></i> #${idx + 1}
+        ${inst.lineStatusText || inst.status}
+      </span>
     `;
   }).join("");
-
-  document.getElementById("total-instances").textContent = instances.length;
 }
 
 function renderInstanceSettings() {
-  const container = document.getElementById("instance-settings");
+  const container = document.getElementById("instance-inputs");
   
   if (instances.length === 0) {
-    container.innerHTML = `<p class="text-muted text-center">ไม่พบ instance กด Refresh</p>`;
+    container.innerHTML = `<p class="text-muted">ไม่พบ instance</p>`;
     return;
   }
 
-  container.innerHTML = `
-    <div class="row">
-      ${instances.map((inst, idx) => {
-        const isReady = inst.status === "ready";
-        const needsOpen = inst.status === "background" || inst.status === "stopped";
-        
-        let statusBadge = '';
-        if (isReady) {
-          statusBadge = '<span class="badge bg-success ms-1">พร้อม</span>';
-        } else if (inst.status === "background") {
-          statusBadge = '<span class="badge bg-warning ms-1">Background</span>';
-        } else if (inst.status === "stopped") {
-          statusBadge = '<span class="badge bg-secondary ms-1">ปิดอยู่</span>';
-        } else {
-          statusBadge = '<span class="badge bg-danger ms-1">ไม่มี LINE</span>';
-        }
-        
-        return `
-        <div class="col-md-6 mb-2">
-          <div class="input-group input-group-sm">
-            <span class="input-group-text">
-              <i class="bi bi-phone"></i> #${idx + 1}
-            </span>
-            <input type="number" class="form-control friends-count" 
-                   data-device="${inst.deviceId}" 
-                   placeholder="จำนวนเพื่อน" min="1" value="10">
-            <button class="btn ${needsOpen ? 'btn-success' : 'btn-outline-secondary'}" type="button" 
-                    onclick="startLineInstance('${inst.deviceId}')"
-                    title="เปิด LINE App">
-              <i class="bi bi-play-fill"></i>
-            </button>
-          </div>
-          <small class="text-muted">${inst.deviceId} ${statusBadge}</small>
-        </div>
-      `}).join("")}
+  container.innerHTML = instances.map((inst, idx) => `
+    <div class="input-group input-group-sm mb-2">
+      <span class="input-group-text"><i class="bi bi-phone"></i> #${idx + 1}</span>
+      <input type="number" class="form-control friends-count" 
+             data-device="${inst.deviceId}" placeholder="จำนวน" min="1" value="10">
     </div>
-  `;
+  `).join("");
 }
 
 function setupSendAllToggle() {
@@ -178,13 +180,14 @@ function setupSendAllToggle() {
   });
 }
 
-// ==================== PROGRESS MODAL ====================
+// ==================== PROGRESS FUNCTIONS ====================
 
-function showProgressModal(total) {
+function showProgress(total) {
   const isAll = total === "All";
   
   sendingProgress = {
     isRunning: true,
+    isPaused: false,
     current: 0,
     total: isAll ? 0 : total,
     isAll: isAll,
@@ -192,72 +195,21 @@ function showProgressModal(total) {
     failed: []
   };
   
-  const modalHtml = `
-    <div class="modal fade" id="progressModal" data-bs-backdrop="static" tabindex="-1">
-      <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-          <div class="modal-header bg-primary text-white">
-            <h5 class="modal-title">
-              <i class="bi bi-send-fill"></i> กำลังส่งข้อความ...
-            </h5>
-          </div>
-          <div class="modal-body">
-            <div class="text-center mb-3">
-              <div class="display-4 fw-bold text-primary" id="progress-number">
-                ${isAll ? '0' : `0 / ${total}`}
-              </div>
-              <small class="text-muted">${isAll ? 'ข้อความที่ส่ง (ส่งให้เพื่อนทั้งหมด)' : 'ข้อความที่ส่ง'}</small>
-              <div class="mt-2" id="eta-display">
-                <small class="text-muted"><i class="bi bi-clock"></i> กำลังคำนวณเวลา...</small>
-              </div>
-            </div>
-            
-            <div class="progress mb-3" style="height: 25px;">
-              <div class="progress-bar progress-bar-striped progress-bar-animated" 
-                   role="progressbar" style="width: ${isAll ? '100%' : '0%'}" id="progress-bar">
-                ${isAll ? 'กำลังส่ง...' : '0%'}
-              </div>
-            </div>
-            
-            <div class="d-flex justify-content-center gap-4 mb-3">
-              <div class="text-center">
-                <div class="fs-4 text-success fw-bold" id="modal-success-count">0</div>
-                <small class="text-muted">สำเร็จ</small>
-              </div>
-              <div class="text-center">
-                <div class="fs-4 text-danger fw-bold" id="modal-failed-count">0</div>
-                <small class="text-muted">ล้มเหลว</small>
-              </div>
-            </div>
-            
-            <div class="alert alert-info mb-0" id="current-action">
-              <i class="bi bi-hourglass-split"></i> เตรียมส่ง...
-            </div>
-            
-            <div class="mt-3" style="max-height: 200px; overflow-y: auto;" id="progress-list">
-            </div>
-          </div>
-          <div class="modal-footer" id="modal-footer" style="display: none;">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
+  document.getElementById("progress-section").classList.add("active");
+  document.getElementById("progress-current").textContent = "0";
+  document.getElementById("progress-total").textContent = isAll ? "..." : total;
+  document.getElementById("progress-success").textContent = "0";
+  document.getElementById("progress-failed").textContent = "0";
+  document.getElementById("progress-eta").textContent = "--";
+  document.getElementById("progress-bar").style.width = "0%";
+  document.getElementById("progress-bar").textContent = "0%";
   
-  const existingModal = document.getElementById("progressModal");
-  if (existingModal) {
-    existingModal.remove();
-  }
-  
-  document.body.insertAdjacentHTML("beforeend", modalHtml);
-  
-  const modal = new bootstrap.Modal(document.getElementById("progressModal"));
-  modal.show();
+  updateButtonStates();
 }
 
 function updateProgress(current, total, friendNum, success, eta) {
   sendingProgress.current = current;
+  sendingProgress.total = total;
   
   if (success) {
     sendingProgress.sent.push(friendNum);
@@ -265,96 +217,56 @@ function updateProgress(current, total, friendNum, success, eta) {
     sendingProgress.failed.push(friendNum);
   }
   
-  const numberEl = document.getElementById("progress-number");
-  if (numberEl) {
-    if (sendingProgress.isAll) {
-      numberEl.textContent = `${sendingProgress.sent.length + sendingProgress.failed.length}`;
-    } else {
-      numberEl.textContent = `${current} / ${total}`;
-    }
+  const percent = Math.round((current / total) * 100);
+  
+  document.getElementById("progress-current").textContent = current;
+  document.getElementById("progress-total").textContent = total;
+  document.getElementById("progress-success").textContent = sendingProgress.sent.length;
+  document.getElementById("progress-failed").textContent = sendingProgress.failed.length;
+  document.getElementById("progress-bar").style.width = percent + "%";
+  document.getElementById("progress-bar").textContent = percent + "%";
+  
+  if (eta !== undefined) {
+    document.getElementById("progress-eta").textContent = eta + "s";
   }
   
-  // Update ETA
-  const etaEl = document.getElementById("eta-display");
-  if (etaEl && eta !== undefined) {
-    const mins = Math.floor(eta / 60);
-    const secs = eta % 60;
-    etaEl.innerHTML = `<small class="text-muted"><i class="bi bi-clock"></i> เหลืออีกประมาณ ${mins > 0 ? mins + ' นาที ' : ''}${secs} วินาที</small>`;
-  }
-  
-  const progressBar = document.getElementById("progress-bar");
-  if (progressBar) {
-    if (sendingProgress.isAll) {
-      progressBar.style.width = "100%";
-      progressBar.textContent = `กำลังส่ง... (${sendingProgress.sent.length} สำเร็จ)`;
-    } else {
-      const percent = Math.round((current / total) * 100);
-      progressBar.style.width = percent + "%";
-      progressBar.textContent = percent + "%";
-    }
-  }
-  
-  const successEl = document.getElementById("modal-success-count");
-  const failedEl = document.getElementById("modal-failed-count");
-  if (successEl) successEl.textContent = sendingProgress.sent.length;
-  if (failedEl) failedEl.textContent = sendingProgress.failed.length;
-  
-  const actionEl = document.getElementById("current-action");
-  if (actionEl) {
-    if (success) {
-      actionEl.className = "alert alert-success mb-0";
-      actionEl.innerHTML = `<i class="bi bi-check-circle"></i> ส่งให้เพื่อน #${friendNum} สำเร็จ!`;
-    } else {
-      actionEl.className = "alert alert-danger mb-0";
-      actionEl.innerHTML = `<i class="bi bi-x-circle"></i> ส่งให้เพื่อน #${friendNum} ไม่สำเร็จ`;
-    }
-  }
-  
-  const listEl = document.getElementById("progress-list");
-  if (listEl) {
-    const item = document.createElement("div");
-    item.className = `d-flex justify-content-between align-items-center p-2 border-bottom ${success ? 'bg-success bg-opacity-10' : 'bg-danger bg-opacity-10'}`;
-    item.innerHTML = `
-      <span>
-        <i class="bi ${success ? 'bi-check-circle text-success' : 'bi-x-circle text-danger'}"></i>
-        เพื่อน #${friendNum}
-      </span>
-      <span class="badge ${success ? 'bg-success' : 'bg-danger'}">${success ? 'สำเร็จ' : 'ล้มเหลว'}</span>
-    `;
-    listEl.insertBefore(item, listEl.firstChild);
-  }
-  
-  document.getElementById("total-sent").textContent = sendingProgress.sent.length;
-  document.getElementById("total-failed").textContent = sendingProgress.failed.length;
+  addActivity(friendNum, success);
 }
 
 function completeProgress() {
   sendingProgress.isRunning = false;
-  
-  const actionEl = document.getElementById("current-action");
-  if (actionEl) {
-    actionEl.className = "alert alert-success mb-0";
-    actionEl.innerHTML = `
-      <i class="bi bi-check-circle-fill"></i> 
-      <strong>เสร็จสิ้น!</strong> ส่งสำเร็จ ${sendingProgress.sent.length} ข้อความ, ล้มเหลว ${sendingProgress.failed.length}
-    `;
-  }
-  
-  const etaEl = document.getElementById("eta-display");
-  if (etaEl) {
-    etaEl.innerHTML = `<small class="text-success"><i class="bi bi-check-circle"></i> เสร็จสิ้นแล้ว!</small>`;
-  }
+  sendingProgress.isPaused = false;
   
   const progressBar = document.getElementById("progress-bar");
-  if (progressBar) {
-    progressBar.className = "progress-bar bg-success";
-    progressBar.style.width = "100%";
-    progressBar.textContent = "เสร็จสิ้น!";
+  progressBar.classList.remove("progress-bar-animated");
+  progressBar.style.width = "100%";
+  progressBar.textContent = "เสร็จสิ้น!";
+  
+  document.getElementById("progress-eta").textContent = "✓";
+  document.getElementById("saved-state-alert").style.display = "none";
+  
+  updateButtonStates();
+}
+
+function addActivity(friendNum, success) {
+  const container = document.getElementById("activity-list");
+  
+  if (container.querySelector(".text-muted")) {
+    container.innerHTML = "";
   }
   
-  const footer = document.getElementById("modal-footer");
-  if (footer) {
-    footer.style.display = "block";
+  const item = document.createElement("div");
+  item.className = `activity-item ${success ? 'success' : 'failed'}`;
+  item.innerHTML = `
+    <i class="bi bi-${success ? 'check-circle' : 'x-circle'}"></i>
+    <span class="ms-2">เพื่อน #${friendNum}</span>
+    <span class="time">${new Date().toLocaleTimeString()}</span>
+  `;
+  
+  container.insertBefore(item, container.firstChild);
+  
+  while (container.children.length > 20) {
+    container.removeChild(container.lastChild);
   }
 }
 
@@ -363,26 +275,14 @@ function handleStatusUpdate(data) {
   
   if (data.type === "friends-detected") {
     sendingProgress.total = data.count;
-    sendingProgress.isAll = false;
-    
-    const numberEl = document.getElementById("progress-number");
-    if (numberEl) {
-      numberEl.textContent = `0 / ${data.count}`;
-    }
-    
-    const progressBar = document.getElementById("progress-bar");
-    if (progressBar) {
-      progressBar.style.width = "0%";
-      progressBar.textContent = "0%";
-      progressBar.className = "progress-bar progress-bar-striped progress-bar-animated";
-    }
-    
-    const actionEl = document.getElementById("current-action");
-    if (actionEl) {
-      actionEl.className = "alert alert-info mb-0";
-      actionEl.innerHTML = `<i class="bi bi-people"></i> พบเพื่อน ${data.count} คน เริ่มส่ง...`;
-    }
-    
+    document.getElementById("progress-total").textContent = data.count;
+    return;
+  }
+  
+  if (data.type === "resume") {
+    document.getElementById("progress-current").textContent = data.currentIndex;
+    document.getElementById("progress-success").textContent = data.sentCount;
+    document.getElementById("progress-failed").textContent = data.failedCount;
     return;
   }
   
@@ -419,42 +319,9 @@ async function refreshInstances() {
   }
 }
 
-async function startLineInstance(deviceId) {
-  addLog(`กำลังเปิด LINE บน ${deviceId}...`, "info");
-  try {
-    const res = await fetch(`/api/instances/${encodeURIComponent(deviceId)}/start-line`, { method: "POST" });
-    const data = await res.json();
-    if (data.success) {
-      addLog(`เปิด LINE สำเร็จบน ${deviceId}`, "success");
-      setTimeout(refreshInstances, 2000);
-    } else {
-      addLog(`ล้มเหลว: ${data.error}`, "error");
-    }
-  } catch (error) {
-    addLog("Error: " + error.message, "error");
-  }
-}
-
-async function openLineAll() {
-  if (instances.length === 0) {
-    alert("ไม่พบ instance กด Refresh ก่อน");
-    return;
-  }
-  
-  addLog("กำลังเปิด LINE บนทุก instances...", "info");
-  
-  for (const inst of instances) {
-    await startLineInstance(inst.deviceId);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
-  
-  addLog("เสร็จสิ้น! ตรวจสอบว่า LINE อยู่ที่หน้า Home", "success");
-  setTimeout(refreshInstances, 2000);
-}
-
 async function startSendingAll() {
   const message = document.getElementById("message").value;
-  const parallel = document.getElementById("mode-parallel").checked;
+  const parallel = document.getElementById("send-mode").value === "parallel";
   const sendAll = document.getElementById("sendAllFriends").checked;
   const speed = document.querySelector('input[name="speed"]:checked')?.value || 'fast';
   
@@ -487,12 +354,12 @@ async function startSendingAll() {
     });
 
     if (Object.keys(friendsPerInstance).length === 0) {
-      alert("กรุณาระบุจำนวนเพื่อนอย่างน้อย 1 instance");
+      alert("กรุณาระบุจำนวนเพื่อน");
       return;
     }
   }
 
-  showProgressModal(sendAll ? "All" : totalFriends);
+  showProgress(sendAll ? "All" : totalFriends);
   
   addLog(`เริ่มส่งให้ ${sendAll ? "เพื่อนทั้งหมด" : totalFriends + " คน"} (ความเร็ว: ${speed})...`, "info");
 
@@ -515,7 +382,9 @@ async function startSendingAll() {
 async function pauseAll() {
   try {
     await fetch("/api/pause-all", { method: "POST" });
-    addLog("หยุดชั่วคราวทุก instances", "warn");
+    sendingProgress.isPaused = true;
+    addLog("หยุดชั่วคราว", "warn");
+    updateButtonStates();
   } catch (error) {
     addLog("Error: " + error.message, "error");
   }
@@ -524,17 +393,22 @@ async function pauseAll() {
 async function resumeAll() {
   try {
     await fetch("/api/resume-all", { method: "POST" });
-    addLog("ดำเนินการต่อทุก instances", "info");
+    sendingProgress.isPaused = false;
+    addLog("ดำเนินการต่อ", "info");
+    updateButtonStates();
   } catch (error) {
     addLog("Error: " + error.message, "error");
   }
 }
 
 async function stopAll() {
-  if (confirm("แน่ใจว่าต้องการหยุดทั้งหมด?")) {
+  if (confirm("แน่ใจว่าต้องการหยุด?")) {
     try {
       await fetch("/api/stop-all", { method: "POST" });
-      addLog("หยุดทุก instances แล้ว", "warn");
+      sendingProgress.isRunning = false;
+      sendingProgress.isPaused = false;
+      addLog("หยุดแล้ว (กด ส่ง เพื่อส่งต่อได้)", "warn");
+      updateButtonStates();
     } catch (error) {
       addLog("Error: " + error.message, "error");
     }
@@ -542,16 +416,61 @@ async function stopAll() {
 }
 
 async function resetAll() {
-  if (confirm("แน่ใจว่าต้องการรีเซ็ตทั้งหมด?")) {
+  if (confirm("แน่ใจว่าต้องการรีเซ็ต? จะลบประวัติการส่งทั้งหมด")) {
     try {
       await fetch("/api/reset-all", { method: "POST" });
-      addLog("รีเซ็ตทุก instances แล้ว", "info");
+      sendingProgress.isRunning = false;
+      sendingProgress.isPaused = false;
+      addLog("รีเซ็ตแล้ว", "info");
       
-      document.getElementById("total-sent").textContent = "0";
-      document.getElementById("total-failed").textContent = "0";
+      document.getElementById("progress-section").classList.remove("active");
+      document.getElementById("activity-list").innerHTML = '<p class="text-muted text-center mb-0 p-2">ยังไม่มีกิจกรรม</p>';
+      document.getElementById("saved-state-alert").style.display = "none";
+      updateButtonStates();
     } catch (error) {
       addLog("Error: " + error.message, "error");
     }
+  }
+}
+
+async function checkSavedState() {
+  try {
+    if (instances.length === 0) {
+      setTimeout(checkSavedState, 1000);
+      return;
+    }
+    const deviceId = instances[0]?.deviceId;
+    if (!deviceId) return;
+    
+    const res = await fetch(`/api/instances/${encodeURIComponent(deviceId)}/saved-state`);
+    const data = await res.json();
+    
+    // เช็คว่ามี saved state และยังส่งไม่ครบ (remaining > 0)
+    if (data.success && data.hasSavedState && data.state && data.state.remaining > 0) {
+      const state = data.state;
+      document.getElementById('saved-state-info').textContent = 
+        `ส่งไปแล้ว ${state.currentIndex}/${state.totalFriends} คน (เหลือ ${state.remaining} คน)`;
+      document.getElementById('saved-state-alert').style.display = 'block';
+    } else {
+      // ไม่มี state หรือส่งครบแล้ว → ซ่อน alert
+      document.getElementById('saved-state-alert').style.display = 'none';
+    }
+  } catch (e) {
+    document.getElementById('saved-state-alert').style.display = 'none';
+  }
+}
+
+async function clearSavedState() {
+  if (!confirm('แน่ใจว่าต้องการเริ่มใหม่?')) return;
+  
+  try {
+    for (const inst of instances) {
+      await fetch(`/api/instances/${encodeURIComponent(inst.deviceId)}/clear-state`, { method: 'POST' });
+    }
+    document.getElementById('saved-state-alert').style.display = 'none';
+    addLog('ล้างประวัติแล้ว', 'info');
+  } catch (e) {
+    addLog('Error: ' + e.message, 'error');
   }
 }
 
@@ -578,24 +497,31 @@ function clearLogs() {
 // ==================== INIT ====================
 
 document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("send-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    startSendingAll();
-  });
-
   setupSendAllToggle();
   refreshInstances();
+  updateButtonStates(); // Set initial button states
   
-  setInterval(refreshInstancesQuiet, 5000);
+  // Speed button highlight
+  document.querySelectorAll('input[name="speed"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+      document.querySelectorAll('.speed-btn').forEach(btn => btn.classList.remove('active'));
+      this.nextElementSibling.classList.add('active');
+    });
+  });
+  document.querySelector('input[name="speed"]:checked')?.nextElementSibling?.classList.add('active');
+  
+  // Auto refresh instances
+  setInterval(async () => {
+    // ไม่ refresh ถ้ากำลังส่งอยู่
+    if (sendingProgress.isRunning) return;
+    
+    try {
+      const res = await fetch("/api/instances/info");
+      const data = await res.json();
+      if (data.success && data.instances) {
+        instances = data.instances;
+        renderInstances();
+      }
+    } catch (error) {}
+  }, 5000);
 });
-
-async function refreshInstancesQuiet() {
-  try {
-    const res = await fetch("/api/instances/info");
-    const data = await res.json();
-    if (data.success && data.instances) {
-      instances = data.instances;
-      renderInstances();
-    }
-  } catch (error) {}
-}

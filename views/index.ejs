@@ -3,240 +3,199 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LINE Web Automation - Multi Instance</title>
+  <title>LINE Automation v3.2</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
   <link href="/css/style.css" rel="stylesheet">
 </head>
 <body>
-  <div class="container-fluid">
-    <div class="row">
-      <!-- Sidebar -->
-      <div class="col-md-3 sidebar">
-        <div class="sidebar-header">
-          <h4><i class="bi bi-phone"></i> LINE Multi-Instance</h4>
-          <small class="text-muted">รองรับ ไทย/Emoji/URL</small>
-        </div>
 
-        <!-- Instances List -->
-        <div class="card mb-3">
-          <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-collection"></i> Instances</span>
-            <button class="btn btn-sm btn-outline-light" onclick="refreshInstances()">
-              <i class="bi bi-arrow-clockwise"></i>
-            </button>
-          </div>
-          <div class="card-body p-0">
-            <div id="instances-list">
-              <div class="text-center p-3">
-                <div class="spinner-border spinner-border-sm" role="status"></div>
-                <span class="ms-2">Detecting...</span>
-              </div>
-            </div>
-          </div>
-        </div>
+<!-- Top Control Bar - Always Visible -->
+<div class="control-bar">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div class="d-flex align-items-center gap-3">
+      <h5 class="text-white mb-0">
+        <i class="bi bi-chat-dots-fill text-success"></i> LINE Automation
+      </h5>
+      <div id="instance-badges"></div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <button class="btn btn-success" onclick="startSendingAll()" id="btn-start">
+        <i class="bi bi-send-fill"></i> ส่ง
+      </button>
+      <button class="btn btn-warning" onclick="pauseAll()" id="btn-pause">
+        <i class="bi bi-pause-fill"></i> พัก
+      </button>
+      <button class="btn btn-info" onclick="resumeAll()" id="btn-resume">
+        <i class="bi bi-play-fill"></i> ต่อ
+      </button>
+      <button class="btn btn-danger" onclick="stopAll()" id="btn-stop">
+        <i class="bi bi-stop-fill"></i> หยุด
+      </button>
+      <button class="btn btn-secondary" onclick="resetAll()" id="btn-reset">
+        <i class="bi bi-arrow-counterclockwise"></i>
+      </button>
+      <button class="btn btn-outline-light" onclick="refreshInstances()" title="Refresh">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+    </div>
+  </div>
+</div>
 
-        <!-- Quick Actions -->
-        <div class="card mb-3">
-          <div class="card-header">
-            <i class="bi bi-lightning"></i> Quick Actions
-          </div>
-          <div class="card-body">
-            <button class="btn btn-success btn-sm w-100 mb-2" onclick="openLineAll()">
-              <i class="bi bi-play-fill"></i> เปิด LINE ทุก Instance
-            </button>
-            <button class="btn btn-warning btn-sm w-100 mb-2" onclick="pauseAll()">
-              <i class="bi bi-pause-fill"></i> หยุดชั่วคราว
-            </button>
-            <button class="btn btn-danger btn-sm w-100 mb-2" onclick="stopAll()">
-              <i class="bi bi-stop-fill"></i> หยุดทั้งหมด
-            </button>
-            <button class="btn btn-secondary btn-sm w-100" onclick="resetAll()">
-              <i class="bi bi-arrow-counterclockwise"></i> รีเซ็ต
-            </button>
-          </div>
-        </div>
-
-        <!-- Combined Stats -->
-        <div class="card">
-          <div class="card-header">
-            <i class="bi bi-bar-chart"></i> สถิติรวม
-          </div>
-          <div class="card-body">
-            <div class="status-item">
-              <span>Instances:</span>
-              <span id="total-instances" class="badge bg-primary">0</span>
-            </div>
-            <div class="status-item">
-              <span>ส่งสำเร็จ:</span>
-              <span id="total-sent" class="text-success">0</span>
-            </div>
-            <div class="status-item">
-              <span>ล้มเหลว:</span>
-              <span id="total-failed" class="text-danger">0</span>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Clipper Info -->
-        <div class="card mt-3">
-          <div class="card-header">
-            <i class="bi bi-check-circle"></i> รองรับ Unicode
-          </div>
-          <div class="card-body">
-            <small class="text-muted">
-              ✅ ภาษาไทย<br>
-              ✅ Emoji 😀👋🎉<br>
-              ✅ URL<br>
-              <br>
-              ใช้ Clipper + Paste (ไม่ต้องติดตั้งอะไรเพิ่ม)
-            </small>
-          </div>
-        </div>
+<!-- Progress Section -->
+<div class="progress-section" id="progress-section">
+  <div class="progress-stats">
+    <div class="stat">
+      <div class="stat-value text-primary" id="progress-current">0</div>
+      <div class="stat-label">ส่งแล้ว</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value" id="progress-total">0</div>
+      <div class="stat-label">ทั้งหมด</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value text-success" id="progress-success">0</div>
+      <div class="stat-label">สำเร็จ</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value text-danger" id="progress-failed">0</div>
+      <div class="stat-label">ล้มเหลว</div>
+    </div>
+    <div class="flex-grow-1">
+      <div class="progress" style="height: 25px;">
+        <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" 
+             id="progress-bar" style="width: 0%">0%</div>
       </div>
+    </div>
+    <div class="stat">
+      <div class="stat-value text-muted" id="progress-eta">--</div>
+      <div class="stat-label">เหลือ</div>
+    </div>
+  </div>
+</div>
 
-      <!-- Main Content -->
-      <div class="col-md-9 main-content">
-        <!-- Header -->
-        <div class="content-header d-flex justify-content-between align-items-center">
-          <h3><i class="bi bi-send"></i> ส่งข้อความ LINE อัตโนมัติ</h3>
-          <div>
-            <span class="badge bg-info" id="mode-badge">Parallel Mode</span>
-          </div>
-        </div>
+<!-- Saved State Alert -->
+<div class="alert alert-info m-3 mb-0" id="saved-state-alert" style="display: none;">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <i class="bi bi-clock-history"></i>
+      <strong>มีการส่งค้างอยู่!</strong>
+      <span id="saved-state-info"></span>
+    </div>
+    <div>
+      <button class="btn btn-sm btn-primary me-2" onclick="startSendingAll()">
+        <i class="bi bi-play-fill"></i> ส่งต่อ
+      </button>
+      <button class="btn btn-sm btn-outline-danger" onclick="clearSavedState()">
+        <i class="bi bi-trash"></i> เริ่มใหม่
+      </button>
+    </div>
+  </div>
+</div>
 
-        <!-- Send Form -->
-        <div class="card mb-4">
-          <div class="card-header">
-            <i class="bi bi-chat-dots"></i> ตั้งค่าข้อความ
-          </div>
-          <div class="card-body">
-            <form id="send-form">
-              <!-- Open LINE Button -->
-              <div class="alert alert-warning mb-3" id="open-line-alert">
-                <div class="d-flex justify-content-between align-items-center">
-                  <span><i class="bi bi-exclamation-triangle"></i> <strong>ต้องเปิด LINE ไว้ที่หน้า Home ก่อนส่ง!</strong></span>
-                  <button type="button" class="btn btn-success" onclick="openLineAll()">
-                    <i class="bi bi-play-fill"></i> เปิด LINE App
-                  </button>
-                </div>
-              </div>
-
-              <div class="mb-3">
-                <label class="form-label">
-                  ข้อความ 
-                  <span class="badge bg-success">รองรับ ภาษาไทย</span>
-                  <span class="badge bg-primary">Emoji 😀</span>
-                  <span class="badge bg-info">URL</span>
-                </label>
-                <textarea class="form-control" id="message" rows="4" placeholder="พิมพ์ข้อความที่นี่...&#10;รองรับภาษาไทย อีโมจิ และ URL">สวัสดีครับ! 👋
+<!-- Main Content -->
+<div class="main-container">
+  
+  <!-- Left Panel - Settings -->
+  <div class="settings-panel">
+    
+    <!-- Message Card -->
+    <div class="card">
+      <div class="card-header">
+        <i class="bi bi-chat-text"></i> ข้อความ
+        <span class="badge bg-success ms-2">ไทย</span>
+        <span class="badge bg-primary">Emoji</span>
+        <span class="badge bg-info">URL</span>
+      </div>
+      <div class="card-body">
+        <textarea class="form-control message-input" id="message" rows="5" 
+                  placeholder="พิมพ์ข้อความที่นี่...">สวัสดีครับ! 👋
 
 ข้อความทดสอบจาก LINE automation
 ลิงก์: https://example.com</textarea>
-                <small class="text-muted">
-                  💡 รองรับ ภาษาไทย, Emoji และ URL
-                </small>
-              </div>
-
-              <!-- Instance Settings -->
-              <div class="card mb-3">
-                <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                  <span><i class="bi bi-sliders"></i> ตั้งค่าการส่ง</span>
-                  <div class="form-check form-switch mb-0">
-                    <input class="form-check-input" type="checkbox" id="sendAllFriends" checked>
-                    <label class="form-check-label" for="sendAllFriends">ส่งให้เพื่อนทั้งหมด</label>
-                  </div>
-                </div>
-                <div class="card-body">
-                  <div id="send-all-info" class="alert alert-info mb-3">
-                    <i class="bi bi-info-circle"></i> จะส่งให้ <strong>เพื่อนทั้งหมด</strong> ในลิสต์
-                    <br><small class="text-muted">เลิกเลือก "ส่งให้เพื่อนทั้งหมด" เพื่อระบุจำนวนเอง</small>
-                  </div>
-                  <div id="instance-settings" style="display: none;">
-                    <p class="text-muted text-center">ไม่พบ instance กด "Refresh" เพื่อตรวจหา</p>
-                  </div>
-                  
-                  <!-- Speed Settings -->
-                  <div class="mt-3 pt-3 border-top">
-                    <label class="form-label"><i class="bi bi-speedometer2"></i> ความเร็ว</label>
-                    <div class="btn-group w-100" role="group">
-                      <input type="radio" class="btn-check" name="speed" id="speed-normal" value="normal">
-                      <label class="btn btn-outline-secondary" for="speed-normal">🐢 ปกติ</label>
-                      
-                      <input type="radio" class="btn-check" name="speed" id="speed-fast" value="fast" checked>
-                      <label class="btn btn-outline-primary" for="speed-fast">🚀 เร็ว</label>
-                      
-                      <input type="radio" class="btn-check" name="speed" id="speed-turbo" value="turbo">
-                      <label class="btn btn-outline-danger" for="speed-turbo">⚡ เร็วมาก</label>
-                    </div>
-                    <small class="text-muted d-block mt-1">
-                      ⚠️ ความเร็วสูงอาจทำให้เกิดข้อผิดพลาดได้
-                    </small>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Send Mode -->
-              <div class="mb-3">
-                <label class="form-label">โหมดการส่ง</label>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="sendMode" id="mode-parallel" value="parallel" checked>
-                  <label class="form-check-label" for="mode-parallel">
-                    <i class="bi bi-lightning"></i> Parallel (ส่งจากทุก instance พร้อมกัน)
-                  </label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input" type="radio" name="sendMode" id="mode-sequential" value="sequential">
-                  <label class="form-check-label" for="mode-sequential">
-                    <i class="bi bi-list-ol"></i> Sequential (ส่งทีละ instance)
-                  </label>
-                </div>
-              </div>
-
-              <!-- Control Buttons -->
-              <div class="control-buttons">
-                <button type="submit" class="btn btn-success btn-lg" id="btn-start">
-                  <i class="bi bi-send-fill"></i> เริ่มส่งข้อความ
-                </button>
-                <button type="button" class="btn btn-warning btn-lg" onclick="pauseAll()" id="btn-pause">
-                  <i class="bi bi-pause-fill"></i> หยุดชั่วคราว
-                </button>
-                <button type="button" class="btn btn-info btn-lg" onclick="resumeAll()" id="btn-resume">
-                  <i class="bi bi-play-fill"></i> ดำเนินการต่อ
-                </button>
-                <button type="button" class="btn btn-danger btn-lg" onclick="stopAll()" id="btn-stop">
-                  <i class="bi bi-stop-fill"></i> หยุดทั้งหมด
-                </button>
-              </div>
-            </form>
+      </div>
+    </div>
+    
+    <!-- Settings Card -->
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-gear"></i> ตั้งค่า</span>
+        <div class="form-check form-switch mb-0">
+          <input class="form-check-input" type="checkbox" id="sendAllFriends" checked>
+          <label class="form-check-label" for="sendAllFriends">ส่งให้เพื่อนทั้งหมด</label>
+        </div>
+      </div>
+      <div class="card-body">
+        
+        <div id="send-all-info" class="alert alert-success mb-3">
+          <i class="bi bi-people-fill"></i> จะส่งให้ <strong>เพื่อนทั้งหมด</strong> ในลิสต์
+        </div>
+        
+        <div id="instance-settings" style="display: none;">
+          <label class="form-label">จำนวนเพื่อนที่จะส่ง</label>
+          <div id="instance-inputs"></div>
+        </div>
+        
+        <div class="mt-3">
+          <label class="form-label"><i class="bi bi-speedometer2"></i> ความเร็ว</label>
+          <div class="btn-group w-100">
+            <input type="radio" class="btn-check" name="speed" id="speed-normal" value="normal">
+            <label class="btn btn-outline-secondary speed-btn" for="speed-normal">🐢 ปกติ</label>
+            
+            <input type="radio" class="btn-check" name="speed" id="speed-fast" value="fast" checked>
+            <label class="btn btn-outline-secondary speed-btn" for="speed-fast">🚀 เร็ว</label>
+            
+            <input type="radio" class="btn-check" name="speed" id="speed-turbo" value="turbo">
+            <label class="btn btn-outline-secondary speed-btn" for="speed-turbo">⚡ เร็วมาก</label>
           </div>
         </div>
-
-        <!-- Progress Cards -->
-        <div class="row" id="progress-cards">
-          <!-- จะถูกสร้างโดย JavaScript -->
+        
+        <div class="mt-3">
+          <label class="form-label"><i class="bi bi-diagram-3"></i> โหมด</label>
+          <select class="form-select" id="send-mode">
+            <option value="parallel">Parallel (ส่งพร้อมกันทุก instance)</option>
+            <option value="sequential">Sequential (ส่งทีละ instance)</option>
+          </select>
         </div>
-
-        <!-- Logs -->
-        <div class="card">
-          <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-terminal"></i> Logs</span>
-            <button class="btn btn-sm btn-outline-secondary" onclick="clearLogs()">
-              <i class="bi bi-trash"></i> ล้าง
-            </button>
-          </div>
-          <div class="card-body">
-            <div class="log-box" id="log-box">
-              <p class="text-muted">รอ logs...</p>
-            </div>
-          </div>
+        
+      </div>
+    </div>
+    
+    <!-- Activity Card -->
+    <div class="card">
+      <div class="card-header">
+        <i class="bi bi-list-check"></i> กิจกรรมล่าสุด
+      </div>
+      <div class="card-body p-2 activity-body">
+        <div id="activity-list">
+          <p class="text-muted text-center mb-0 p-2">ยังไม่มีกิจกรรม</p>
+        </div>
+      </div>
+    </div>
+    
+  </div>
+  
+  <!-- Right Panel - Logs -->
+  <div class="logs-panel">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-terminal"></i> Logs</span>
+        <button class="btn btn-sm btn-outline-secondary" onclick="clearLogs()">
+          <i class="bi bi-trash"></i> ล้าง
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <div class="log-box" id="log-box">
+          <p class="text-muted">รอ logs...</p>
         </div>
       </div>
     </div>
   </div>
+  
+</div>
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/app.js"></script>
 </body>
 </html>
