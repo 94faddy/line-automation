@@ -1,0 +1,265 @@
+/* LINE Web Automation Styles */
+
+:root {
+  --primary-color: #00B900;
+  --sidebar-bg: #1a1a2e;
+  --sidebar-text: #eee;
+  --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+body {
+  background-color: #f5f6fa;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Sidebar */
+.sidebar {
+  background: var(--sidebar-bg);
+  min-height: 100vh;
+  color: var(--sidebar-text);
+  padding: 0;
+}
+
+.sidebar-header {
+  padding: 20px;
+  background: linear-gradient(135deg, var(--primary-color), #009900);
+  text-align: center;
+}
+
+.sidebar-header h4 {
+  margin: 0;
+  font-weight: bold;
+}
+
+.sidebar .card {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  margin: 15px;
+  border-radius: 10px;
+}
+
+.sidebar .card-header {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--sidebar-text);
+  font-weight: 600;
+}
+
+.sidebar .card-body {
+  color: var(--sidebar-text);
+}
+
+.status-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.status-item:last-child {
+  border-bottom: none;
+}
+
+/* Instance Item */
+.instance-item {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  transition: background 0.2s;
+}
+
+.instance-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.instance-item:last-child {
+  border-bottom: none;
+}
+
+/* Main Content */
+.main-content {
+  padding: 20px 30px;
+}
+
+.content-header {
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 2px solid var(--primary-color);
+}
+
+.content-header h3 {
+  margin: 0;
+  color: #333;
+}
+
+/* Cards */
+.card {
+  border: none;
+  border-radius: 15px;
+  box-shadow: var(--card-shadow);
+}
+
+.card-header {
+  background: #fff;
+  border-bottom: 1px solid #eee;
+  font-weight: 600;
+  border-radius: 15px 15px 0 0 !important;
+}
+
+/* Instance Progress Card */
+.instance-progress-card {
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.instance-progress-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+}
+
+.instance-progress-card .sent-list {
+  font-size: 12px;
+  border-top: 1px solid #eee;
+  padding-top: 8px;
+  margin-top: 8px;
+}
+
+/* Control Buttons */
+.control-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 15px;
+  border-top: 1px solid #eee;
+  margin-top: 15px;
+}
+
+.control-buttons .btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Progress Bar */
+.progress {
+  border-radius: 15px;
+  background: #e9ecef;
+}
+
+.progress-bar {
+  background: linear-gradient(135deg, var(--primary-color), #009900);
+  border-radius: 15px;
+  font-weight: bold;
+  transition: width 0.3s ease;
+}
+
+/* Sent List */
+.sent-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.sent-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 5px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.sent-item.success {
+  background: #d4edda;
+  border-left: 3px solid #28a745;
+}
+
+.sent-item.failed {
+  background: #f8d7da;
+  border-left: 3px solid #dc3545;
+}
+
+.sent-item i {
+  margin-right: 10px;
+}
+
+.sent-item .time {
+  margin-left: auto;
+  font-size: 12px;
+  color: #666;
+}
+
+/* Log Box */
+.log-box {
+  background: #1a1a2e;
+  color: #0f0;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  padding: 15px;
+  border-radius: 10px;
+  height: 250px;
+  overflow-y: auto;
+}
+
+.log-box p {
+  margin: 2px 0;
+}
+
+.log-box .log-info {
+  color: #0ff;
+}
+
+.log-box .log-success {
+  color: #0f0;
+}
+
+.log-box .log-warn {
+  color: #ff0;
+}
+
+.log-box .log-error {
+  color: #f00;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .sidebar {
+    min-height: auto;
+  }
+  
+  .control-buttons {
+    justify-content: center;
+  }
+  
+  .control-buttons .btn {
+    flex: 1 1 45%;
+  }
+}
+
+/* Badge Colors */
+.badge.bg-success-pulse {
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}

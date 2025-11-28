@@ -1,20 +1,16 @@
 {
-  "name": "line-bluestacks-automation",
-  "version": "1.0.0",
-  "description": "LINE BlueStacks Automation - Multi-Instance Support",
-  "main": "index.js",
+  "name": "line-web-automation",
+  "version": "2.0.0",
+  "description": "LINE BlueStacks Automation Web App",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js",
-    "scan": "node index.js --scan",
-    "send": "node index.js --send",
-    "test": "node index.js --test"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "dependencies": {
-    "inquirer": "^8.2.6",
-    "chalk": "^4.1.2",
-    "ora": "^5.4.1",
-    "cli-table3": "^0.6.3",
-    "sharp": "^0.32.6",
-    "jimp": "^0.22.10"
+    "express": "^4.18.2",
+    "ejs": "^3.1.9",
+    "socket.io": "^4.6.1",
+    "dotenv": "^16.3.1"
   }
 }

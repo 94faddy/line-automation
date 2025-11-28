@@ -1,23 +1,15 @@
 /**
  * ADB Controller Module
- * ควบคุม BlueStacks ผ่าน ADB commands
  */
 
-const { execSync, exec } = require("child_process");
-const fs = require("fs");
-const path = require("path");
-const config = require("./config");
+const { execSync } = require("child_process");
 
 class ADBController {
-  constructor(deviceId = null) {
-    this.adbPath = config.bluestacks.adbPath;
+  constructor(adbPath, deviceId = null) {
+    this.adbPath = adbPath;
     this.deviceId = deviceId;
-    this.connected = false;
   }
 
-  /**
-   * Execute ADB command
-   */
   exec(command, options = {}) {
     const deviceArg = this.deviceId ? `-s ${this.deviceId}` : "";
     const fullCommand = `"${this.adbPath}" ${deviceArg} ${command}`;
@@ -25,7 +17,8 @@ class ADBController {
     try {
       const result = execSync(fullCommand, {
         encoding: "utf8",
-        timeout: options.timeout || 30000,
+        timeout: options.timeout || 10000,
+        stdio: 'pipe',
         ...options,
       });
       return { success: true, output: result.trim() };
@@ -35,64 +28,110 @@ class ADBController {
   }
 
   /**
-   * Execute ADB command async
-   */
-  execAsync(command) {
-    return new Promise((resolve, reject) => {
-      const deviceArg = this.deviceId ? `-s ${this.deviceId}` : "";
-      const fullCommand = `"${this.adbPath}" ${deviceArg} ${command}`;
-      
-      exec(fullCommand, { encoding: "utf8", timeout: 30000 }, (error, stdout, stderr) => {
-        if (error) {
-          resolve({ success: false, error: error.message, output: stdout });
-        } else {
-          resolve({ success: true, output: stdout.trim() });
-        }
-      });
-    });
-  }
-
-  /**
-   * Get list of connected devices
+   * Auto-detect ทุก BlueStacks instances ที่เปิดอยู่
+   * กรอง duplicate devices ออก
    */
   static getDevices(adbPath) {
     try {
       const result = execSync(`"${adbPath}" devices`, { encoding: "utf8" });
       const lines = result.split("\n").filter(line => line.includes("\tdevice"));
       
-      return lines.map(line => {
+      const devices = [];
+      const seenPorts = new Set();
+      
+      for (const line of lines) {
         const [id] = line.split("\t");
-        return { id: id.trim(), status: "device" };
-      });
+        const deviceId = id.trim();
+        
+        // ดึง port จาก device ID
+        let port = null;
+        if (deviceId.includes(":")) {
+          // Format: 127.0.0.1:5555
+          port = deviceId.split(":")[1];
+        } else if (deviceId.startsWith("emulator-")) {
+          // Format: emulator-5554 → port จริงคือ 5555 (5554 + 1 สำหรับ adb)
+          port = deviceId.replace("emulator-", "");
+        }
+        
+        // ข้าม emulator-xxxx ถ้ามี 127.0.0.1:xxxx แล้ว (เป็น device เดียวกัน)
+        if (deviceId.startsWith("emulator-")) {
+          // Skip emulator format, prefer IP format
+          continue;
+        }
+        
+        // เช็ค duplicate port
+        if (port && seenPorts.has(port)) {
+          continue;
+        }
+        
+        if (port) {
+          seenPorts.add(port);
+        }
+        
+        devices.push({ id: deviceId, status: "device", port });
+      }
+      
+      return devices;
     } catch (error) {
       return [];
     }
   }
 
   /**
-   * Connect to BlueStacks instance
+   * Auto-detect และ connect ทุก instances
+   * แบบเร็ว - ใช้ devices ที่ connect อยู่แล้ว
    */
-  connect(port = 5555) {
-    const result = this.exec(`connect 127.0.0.1:${port}`);
-    if (result.success && result.output.includes("connected")) {
-      this.deviceId = `127.0.0.1:${port}`;
-      this.connected = true;
-      return true;
+  static async autoDetectInstances(adbPath) {
+    // ดึงรายการ devices ที่ connect อยู่แล้วก่อน (เร็ว)
+    let devices = ADBController.getDevices(adbPath);
+    
+    // ถ้าไม่เจอ ค่อยลอง connect port 5555 (default)
+    if (devices.length === 0) {
+      try {
+        execSync(`"${adbPath}" connect 127.0.0.1:5555`, { 
+          encoding: "utf8",
+          timeout: 2000,
+          stdio: 'pipe'
+        });
+        await new Promise(resolve => setTimeout(resolve, 300));
+        devices = ADBController.getDevices(adbPath);
+      } catch (e) {
+        // Ignore
+      }
     }
-    return false;
+    
+    return devices;
   }
 
   /**
-   * Check if device is connected
+   * Scan หา instances ใหม่ (ช้ากว่า แต่ครบ)
    */
+  static async scanAllInstances(adbPath) {
+    const commonPorts = [5555, 5565, 5575, 5585, 5595];
+    
+    // Connect แบบ parallel ให้เร็วขึ้น
+    await Promise.all(commonPorts.map(port => {
+      return new Promise(resolve => {
+        try {
+          execSync(`"${adbPath}" connect 127.0.0.1:${port}`, { 
+            encoding: "utf8",
+            timeout: 1500,
+            stdio: 'pipe'
+          });
+        } catch (e) {}
+        resolve();
+      });
+    }));
+    
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return ADBController.getDevices(adbPath);
+  }
+
   isConnected() {
     const result = this.exec("get-state");
     return result.success && result.output === "device";
   }
 
-  /**
-   * Get device screen resolution
-   */
   getScreenSize() {
     const result = this.exec("shell wm size");
     if (result.success) {
@@ -101,57 +140,18 @@ class ADBController {
         return { width: parseInt(match[1]), height: parseInt(match[2]) };
       }
     }
-    return { width: 1080, height: 1920 }; // default
+    return { width: 1080, height: 1920 };
   }
 
-  /**
-   * Tap on screen
-   */
   tap(x, y) {
     return this.exec(`shell input tap ${Math.round(x)} ${Math.round(y)}`);
   }
 
-  /**
-   * Long press on screen
-   */
-  longPress(x, y, duration = 1000) {
-    return this.exec(`shell input swipe ${x} ${y} ${x} ${y} ${duration}`);
-  }
-
-  /**
-   * Swipe on screen
-   */
   swipe(x1, y1, x2, y2, duration = 300) {
     return this.exec(`shell input swipe ${x1} ${y1} ${x2} ${y2} ${duration}`);
   }
 
-  /**
-   * Scroll down
-   */
-  scrollDown(amount = 500) {
-    const screenSize = this.getScreenSize();
-    const centerX = screenSize.width / 2;
-    const startY = screenSize.height / 2;
-    const endY = startY - amount;
-    return this.swipe(centerX, startY, centerX, endY, 200);
-  }
-
-  /**
-   * Scroll up
-   */
-  scrollUp(amount = 500) {
-    const screenSize = this.getScreenSize();
-    const centerX = screenSize.width / 2;
-    const startY = screenSize.height / 2;
-    const endY = startY + amount;
-    return this.swipe(centerX, startY, centerX, endY, 200);
-  }
-
-  /**
-   * Type text
-   */
   type(text) {
-    // Escape special characters for shell
     const escaped = text
       .replace(/\\/g, "\\\\")
       .replace(/"/g, '\\"')
@@ -166,162 +166,152 @@ class ADBController {
     return this.exec(`shell input text "${escaped}"`);
   }
 
-  /**
-   * Type text using broadcast (better for Thai/Unicode)
-   */
-  typeUnicode(text) {
-    // Use ADB broadcast for unicode text
-    const base64Text = Buffer.from(text).toString("base64");
-    return this.exec(`shell am broadcast -a ADB_INPUT_TEXT --es msg "${base64Text}"`);
+  pressBack() {
+    return this.exec("shell input keyevent 4");
+  }
+
+  pressHome() {
+    return this.exec("shell input keyevent 3");
   }
 
   /**
-   * Input text via clipboard (best for Thai)
+   * เช็คว่า LINE app กำลังแสดงอยู่บนหน้าจอไหม (Foreground)
+   * ไม่ใช่แค่ process running
    */
-  async typeViaClipboard(text) {
-    // This requires a helper app on Android
-    // Alternative: use input keyevent with character codes
-    const result = this.exec(`shell input text "${encodeURIComponent(text)}"`);
-    return result;
-  }
-
-  /**
-   * Press key
-   */
-  keyEvent(keyCode) {
-    return this.exec(`shell input keyevent ${keyCode}`);
-  }
-
-  /**
-   * Common key events
-   */
-  pressBack() { return this.keyEvent(4); }
-  pressHome() { return this.keyEvent(3); }
-  pressEnter() { return this.keyEvent(66); }
-  pressDelete() { return this.keyEvent(67); }
-  pressTab() { return this.keyEvent(61); }
-
-  /**
-   * Take screenshot
-   */
-  screenshot(localPath) {
-    const remotePath = "/sdcard/screenshot.png";
-    
-    // Capture screenshot
-    const captureResult = this.exec(`shell screencap -p ${remotePath}`);
-    if (!captureResult.success) return captureResult;
-    
-    // Pull to local
-    const pullResult = this.exec(`pull ${remotePath} "${localPath}"`);
-    
-    // Clean up
-    this.exec(`shell rm ${remotePath}`);
-    
-    return pullResult;
-  }
-
-  /**
-   * Get screenshot as buffer
-   */
-  async screenshotBuffer() {
-    const tempPath = path.join(process.cwd(), `temp_screenshot_${Date.now()}.png`);
-    const result = this.screenshot(tempPath);
-    
-    if (result.success && fs.existsSync(tempPath)) {
-      const buffer = fs.readFileSync(tempPath);
-      fs.unlinkSync(tempPath);
-      return buffer;
+  isLineForeground(linePackage) {
+    // เช็คจาก mCurrentFocus (วิธีที่แม่นยำที่สุด)
+    const result = this.exec("shell dumpsys window windows");
+    if (result.success) {
+      const lines = result.output.split('\n');
+      for (const line of lines) {
+        if (line.includes('mCurrentFocus') || line.includes('mFocusedApp')) {
+          if (line.includes(linePackage)) {
+            return true;
+          }
+        }
+      }
     }
-    return null;
+    return false;
   }
 
   /**
-   * Start an app
+   * เช็คว่า LINE process กำลังทำงานอยู่ไหม (Background หรือ Foreground)
    */
-  startApp(packageName, activityName = null) {
-    if (activityName) {
-      return this.exec(`shell am start -n ${packageName}/${activityName}`);
-    }
-    return this.exec(`shell monkey -p ${packageName} -c android.intent.category.LAUNCHER 1`);
-  }
-
-  /**
-   * Stop an app
-   */
-  stopApp(packageName) {
-    return this.exec(`shell am force-stop ${packageName}`);
-  }
-
-  /**
-   * Check if app is running
-   */
-  isAppRunning(packageName) {
-    const result = this.exec(`shell pidof ${packageName}`);
+  isLineRunning(linePackage) {
+    const result = this.exec(`shell pidof ${linePackage}`);
     return result.success && result.output.length > 0;
   }
 
   /**
-   * Get current activity
+   * เช็คสถานะ LINE แบบละเอียด
+   * @returns {string} "foreground" | "background" | "stopped" | "not_installed"
    */
+  getLineStatus(linePackage) {
+    // เช็คว่าติดตั้งไหม
+    if (!this.isLineInstalled(linePackage)) {
+      return "not_installed";
+    }
+    
+    // เช็คว่าเปิดอยู่บน foreground ไหม
+    if (this.isLineForeground(linePackage)) {
+      return "foreground";
+    }
+    
+    // เช็คว่า process running อยู่ไหม (background)
+    if (this.isLineRunning(linePackage)) {
+      return "background";
+    }
+    
+    return "stopped";
+  }
+
+  // เปิด LINE App ด้วย monkey
+  startLine(linePackage) {
+    // ใช้ monkey -p package 1 (วิธีที่ทดสอบแล้วใช้งานได้)
+    return this.exec(`shell monkey -p ${linePackage} 1`);
+  }
+
+  // ปิด LINE App
+  stopLine(linePackage) {
+    return this.exec(`shell am force-stop ${linePackage}`);
+  }
+
+  // เช็คว่า LINE ติดตั้งอยู่ไหม
+  isLineInstalled(linePackage) {
+    const result = this.exec(`shell pm list packages ${linePackage}`);
+    return result.success && result.output.includes(linePackage);
+  }
+
+  // ถ่าย screenshot
+  screenshot(localPath) {
+    const remotePath = "/sdcard/screenshot.png";
+    const captureResult = this.exec(`shell screencap -p ${remotePath}`);
+    if (!captureResult.success) return captureResult;
+    
+    const pullResult = this.exec(`pull ${remotePath} "${localPath}"`);
+    this.exec(`shell rm ${remotePath}`);
+    return pullResult;
+  }
+
+  // Get current activity
   getCurrentActivity() {
     const result = this.exec("shell dumpsys activity activities | grep mResumedActivity");
     return result;
   }
 
-  /**
-   * Wait for element (by taking screenshots and comparing)
-   */
-  async wait(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  // Get device model/name
+  getDeviceModel() {
+    const result = this.exec("shell getprop ro.product.model", { timeout: 3000 });
+    return result.success ? result.output : "Unknown";
   }
 
   /**
-   * Clear app data
+   * ดึงจำนวนเพื่อนจากหน้า Friend lists
+   * รองรับทั้งภาษาอังกฤษ (Friends 2) และภาษาไทย (เพื่อน 2)
+   * @returns {number} จำนวนเพื่อน หรือ -1 ถ้าหาไม่เจอ
    */
-  clearAppData(packageName) {
-    return this.exec(`shell pm clear ${packageName}`);
-  }
-
-  /**
-   * Install APK
-   */
-  installApk(apkPath) {
-    return this.exec(`install "${apkPath}"`);
-  }
-
-  /**
-   * Get device info
-   */
-  getDeviceInfo() {
-    const model = this.exec("shell getprop ro.product.model");
-    const android = this.exec("shell getprop ro.build.version.release");
-    const sdk = this.exec("shell getprop ro.build.version.sdk");
-    
-    return {
-      model: model.output,
-      androidVersion: android.output,
-      sdkVersion: sdk.output,
-      deviceId: this.deviceId,
-    };
-  }
-
-  /**
-   * List installed packages
-   */
-  listPackages(filter = "") {
-    const result = this.exec(`shell pm list packages ${filter}`);
-    if (result.success) {
-      return result.output.split("\n").map(line => line.replace("package:", "").trim()).filter(Boolean);
+  getFriendsCount() {
+    // Dump UI hierarchy
+    const dumpResult = this.exec("shell uiautomator dump /sdcard/ui.xml", { timeout: 10000 });
+    if (!dumpResult.success) {
+      return -1;
     }
-    return [];
+
+    // อ่านไฟล์ XML
+    const catResult = this.exec("shell cat /sdcard/ui.xml", { timeout: 10000 });
+    if (!catResult.success) {
+      return -1;
+    }
+
+    const xml = catResult.output;
+
+    // หา pattern: "Friends X" หรือ "เพื่อน X" จาก home_row_title_name
+    // Pattern 1: English - "Friends 123"
+    const engMatch = xml.match(/text="Friends\s+(\d+)"/i);
+    if (engMatch) {
+      return parseInt(engMatch[1]);
+    }
+
+    // Pattern 2: Thai - "เพื่อน 123"
+    const thaiMatch = xml.match(/text="เพื่อน\s*(\d+)"/);
+    if (thaiMatch) {
+      return parseInt(thaiMatch[1]);
+    }
+
+    // Pattern 3: หา home_row_title_name ที่มีตัวเลข
+    const titleMatch = xml.match(/resource-id="jp\.naver\.line\.android:id\/home_row_title_name"[^>]*text="[^"]*?(\d+)[^"]*"/);
+    if (titleMatch) {
+      return parseInt(titleMatch[1]);
+    }
+
+    return -1;
   }
 
   /**
-   * Check if LINE is installed
+   * ลบไฟล์ UI dump
    */
-  isLineInstalled() {
-    const packages = this.listPackages(config.linePackage);
-    return packages.includes(config.linePackage);
+  cleanupUIDump() {
+    this.exec("shell rm -f /sdcard/ui.xml");
   }
 }
 

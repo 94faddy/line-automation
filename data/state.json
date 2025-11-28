@@ -1,0 +1,20 @@
+{
+  "currentIndex": 2,
+  "totalFriends": 2,
+  "sentFriends": [
+    {
+      "index": 0,
+      "friendNum": 1,
+      "sentAt": "2025-11-28T11:38:01.683Z"
+    },
+    {
+      "index": 1,
+      "friendNum": 2,
+      "sentAt": "2025-11-28T11:38:18.085Z"
+    }
+  ],
+  "failedFriends": [],
+  "lastUpdated": "2025-11-28T11:38:18.086Z",
+  "isRunning": true,
+  "isPaused": false
+}
