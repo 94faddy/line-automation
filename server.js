@@ -1,6 +1,7 @@
 /**
  * LINE Web Automation Server
  * Express + Socket.IO + EJS + Multi-Instance Support
+ * รองรับ Unicode/Thai/Emoji/URL และ Speed Settings
  */
 
 require("dotenv").config();
@@ -52,6 +53,12 @@ const config = {
   },
 };
 
+// Create directories
+const dataDir = path.join(__dirname, "data");
+const logsDir = path.join(__dirname, "logs");
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+
 // สร้าง Multi-Instance Manager
 let multiManager = new MultiInstanceManager(config, io);
 
@@ -64,7 +71,6 @@ app.use(express.urlencoded({ extended: true }));
 
 // ==================== ROUTES ====================
 
-// หน้าแรก
 app.get("/", async (req, res) => {
   const instances = await multiManager.autoDetect();
   const status = multiManager.getCombinedStatus();
@@ -73,19 +79,16 @@ app.get("/", async (req, res) => {
 
 // ==================== API: INSTANCES ====================
 
-// Auto-detect instances
 app.get("/api/instances", async (req, res) => {
   const instances = await multiManager.autoDetect();
   res.json({ success: true, instances });
 });
 
-// Get instances info
 app.get("/api/instances/info", (req, res) => {
   const instances = multiManager.getInstancesInfo();
   res.json({ success: true, instances });
 });
 
-// Get single instance info
 app.get("/api/instances/:deviceId", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
   const instance = multiManager.getInstance(deviceId);
@@ -98,14 +101,12 @@ app.get("/api/instances/:deviceId", (req, res) => {
 
 // ==================== API: LINE APP ====================
 
-// Start LINE on specific instance
 app.post("/api/instances/:deviceId/start-line", async (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
   const result = await multiManager.startLineOnInstance(deviceId);
   res.json(result);
 });
 
-// Start LINE on all instances
 app.post("/api/instances/start-line-all", async (req, res) => {
   const results = await multiManager.startLineOnAll();
   res.json({ success: true, results });
@@ -113,10 +114,9 @@ app.post("/api/instances/start-line-all", async (req, res) => {
 
 // ==================== API: SENDING ====================
 
-// Send on specific instance
 app.post("/api/instances/:deviceId/send", async (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
-  const { message, totalFriends, startFrom, limit } = req.body;
+  const { message, totalFriends, startFrom, limit, speed } = req.body;
 
   if (!message || !totalFriends) {
     return res.json({ success: false, error: "Missing message or totalFriends" });
@@ -131,27 +131,26 @@ app.post("/api/instances/:deviceId/send", async (req, res) => {
     return res.json({ success: false, error: "Already running" });
   }
 
-  // เริ่มส่งใน background
   instance.lineController.sendToAllFriends(message, parseInt(totalFriends), {
     startFrom: parseInt(startFrom) || 0,
     limit: parseInt(limit) || 0,
+    speed: speed || 'fast',
   });
 
   res.json({ success: true, message: "Started sending" });
 });
 
-// Send on ALL instances
 app.post("/api/send-all", async (req, res) => {
-  const { message, friendsPerInstance, parallel, sendAll } = req.body;
+  const { message, friendsPerInstance, parallel, sendAll, speed } = req.body;
 
   if (!message || !friendsPerInstance) {
     return res.json({ success: false, error: "Missing message or friendsPerInstance" });
   }
 
-  // เริ่มส่งใน background
   multiManager.sendOnAllInstances(message, friendsPerInstance, {
     parallel: parallel !== false,
     sendAll: sendAll === true,
+    speed: speed || 'fast',
   });
 
   res.json({ success: true, message: "Started multi-instance sending" });
@@ -159,7 +158,6 @@ app.post("/api/send-all", async (req, res) => {
 
 // ==================== API: CONTROL ====================
 
-// Pause specific instance
 app.post("/api/instances/:deviceId/pause", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
   const instance = multiManager.getInstance(deviceId);
@@ -171,7 +169,6 @@ app.post("/api/instances/:deviceId/pause", (req, res) => {
   }
 });
 
-// Resume specific instance
 app.post("/api/instances/:deviceId/resume", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
   const instance = multiManager.getInstance(deviceId);
@@ -183,7 +180,6 @@ app.post("/api/instances/:deviceId/resume", (req, res) => {
   }
 });
 
-// Stop specific instance
 app.post("/api/instances/:deviceId/stop", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
   const instance = multiManager.getInstance(deviceId);
@@ -195,7 +191,6 @@ app.post("/api/instances/:deviceId/stop", (req, res) => {
   }
 });
 
-// Reset specific instance
 app.post("/api/instances/:deviceId/reset", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
   const instance = multiManager.getInstance(deviceId);
@@ -207,25 +202,21 @@ app.post("/api/instances/:deviceId/reset", (req, res) => {
   }
 });
 
-// Pause all
 app.post("/api/pause-all", (req, res) => {
   multiManager.pauseAll();
   res.json({ success: true });
 });
 
-// Resume all
 app.post("/api/resume-all", (req, res) => {
   multiManager.resumeAll();
   res.json({ success: true });
 });
 
-// Stop all
 app.post("/api/stop-all", (req, res) => {
   multiManager.stopAll();
   res.json({ success: true });
 });
 
-// Reset all
 app.post("/api/reset-all", (req, res) => {
   multiManager.resetAll();
   res.json({ success: true });
@@ -233,13 +224,11 @@ app.post("/api/reset-all", (req, res) => {
 
 // ==================== API: STATUS ====================
 
-// Get combined status
 app.get("/api/status", (req, res) => {
   const status = multiManager.getCombinedStatus();
   res.json({ success: true, ...status });
 });
 
-// Get specific instance status
 app.get("/api/instances/:deviceId/status", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
   const instance = multiManager.getInstance(deviceId);
@@ -254,9 +243,8 @@ app.get("/api/instances/:deviceId/status", (req, res) => {
 // ==================== API: LOGS ====================
 
 app.get("/api/logs", (req, res) => {
-  const logDir = path.join(__dirname, "logs");
   const today = new Date().toISOString().split("T")[0];
-  const logFile = path.join(logDir, `${today}.log`);
+  const logFile = path.join(logsDir, `${today}.log`);
 
   if (fs.existsSync(logFile)) {
     const logs = fs.readFileSync(logFile, "utf8");
@@ -272,7 +260,6 @@ app.get("/api/logs", (req, res) => {
 io.on("connection", async (socket) => {
   console.log("Client connected");
 
-  // Auto-detect และส่ง instances
   const instances = await multiManager.autoDetect();
   const status = multiManager.getCombinedStatus();
   
@@ -285,7 +272,6 @@ io.on("connection", async (socket) => {
     console.log("Client disconnected");
   });
 
-  // Refresh instances
   socket.on("refresh-instances", async () => {
     const instances = await multiManager.autoDetect();
     socket.emit("instances", instances);
@@ -298,15 +284,16 @@ server.listen(config.port, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║     LINE Web Automation v2.0 (Multi-Instance)                 ║
+║     LINE Web Automation v3.1 (Clipper + Paste)                ║
 ║     ─────────────────────────────────────────                 ║
 ║     Server running at http://${config.host}:${config.port}                  ║
 ║                                                               ║
 ║     Features:                                                 ║
+║     • รองรับ ภาษาไทย / Emoji / URL (via Clipper)              ║
 ║     • Auto-detect BlueStacks instances                        ║
-║     • Send from multiple LINE accounts                        ║
-║     • Parallel or Sequential mode                             ║
+║     • ปรับความเร็วได้ (Normal/Fast/Turbo)                     ║
 ║     • Real-time progress tracking                             ║
+║     • Debug & verify text input                               ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);

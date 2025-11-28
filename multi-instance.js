@@ -12,11 +12,10 @@ class MultiInstanceManager {
   constructor(config, io = null) {
     this.config = config;
     this.io = io;
-    this.instances = new Map(); // deviceId -> { adb, lineController, info }
+    this.instances = new Map();
     this.stateFile = path.join(__dirname, "data", "multi-state.json");
   }
 
-  // ส่ง log
   log(message, type = "info", deviceId = null) {
     const timestamp = new Date().toISOString();
     const prefix = deviceId ? `[${deviceId}]` : "[MULTI]";
@@ -27,11 +26,9 @@ class MultiInstanceManager {
     }
   }
 
-  // Auto-detect และ initialize ทุก instances
   async autoDetect() {
     this.log("Auto-detecting BlueStacks instances...");
     
-    // Auto-detect devices
     const devices = await ADBController.autoDetectInstances(this.config.adbPath);
     
     if (devices.length === 0) {
@@ -52,17 +49,17 @@ class MultiInstanceManager {
         const lineStatus = adb.getLineStatus(this.config.linePackage);
         const model = adb.getDeviceModel();
         
-        // สร้าง config สำหรับ instance นี้
+        // เช็ค clipper service แทน ADBKeyboard
+        const clipperCheck = adb.checkClipperService();
+        
         const instanceConfig = {
           ...this.config,
           deviceId: device.id,
         };
         
-        // สร้าง LineController สำหรับ instance นี้
         const lineController = new LineController(instanceConfig, this.io);
         lineController.instanceId = device.id;
         
-        // แปลง status เป็น display text
         let statusText = "Unknown";
         let statusType = "stopped";
         switch (lineStatus) {
@@ -93,6 +90,7 @@ class MultiInstanceManager {
           lineStatus,
           lineStatusText: statusText,
           status: statusType,
+          clipperAvailable: clipperCheck.available,
         };
         
         this.instances.set(device.id, {
@@ -103,7 +101,8 @@ class MultiInstanceManager {
         
         instanceList.push(info);
         
-        this.log(`Instance ${device.id}: ${model}, LINE: ${statusText}`, "info", device.id);
+        const clipperStatus = clipperCheck.available ? "✓ Clipper" : "⚠ No Clipper";
+        this.log(`Instance ${device.id}: ${model}, LINE: ${statusText}, ${clipperStatus}`, "info", device.id);
       }
     }
 
@@ -114,11 +113,9 @@ class MultiInstanceManager {
     return instanceList;
   }
 
-  // Get all instances info
   getInstancesInfo() {
     const list = [];
     for (const [deviceId, instance] of this.instances) {
-      // อัพเดท status
       const lineStatus = instance.adb.getLineStatus(this.config.linePackage);
       
       let statusText = "Unknown";
@@ -150,12 +147,10 @@ class MultiInstanceManager {
     return list;
   }
 
-  // Get single instance
   getInstance(deviceId) {
     return this.instances.get(deviceId);
   }
 
-  // Start LINE on specific instance
   async startLineOnInstance(deviceId) {
     const instance = this.instances.get(deviceId);
     if (!instance) {
@@ -164,23 +159,18 @@ class MultiInstanceManager {
 
     this.log(`Opening LINE app...`, "info", deviceId);
     
-    // ใช้ monkey -p package 1 (วิธีที่ทดสอบแล้วใช้งานได้)
     const result = instance.adb.exec(`shell monkey -p ${this.config.linePackage} 1`);
     this.log(`Command result: ${result.output || result.error || 'OK'}`, "info", deviceId);
     
-    // รอ LINE เปิด
     await new Promise(resolve => setTimeout(resolve, 3000));
     
-    // กด Home ของ LINE เพื่อไปหน้าหลัก
     this.log(`Tapping LINE Home button...`, "info", deviceId);
     instance.adb.tap(this.config.coords.homeX, this.config.coords.homeY);
     await new Promise(resolve => setTimeout(resolve, 1500));
     
-    // เช็ค status อีกครั้ง
     const newStatus = instance.adb.getLineStatus(this.config.linePackage);
     this.log(`LINE status: ${newStatus}`, "info", deviceId);
     
-    // อัพเดท info
     instance.info.lineStatus = newStatus;
     if (newStatus === "foreground") {
       instance.info.lineStatusText = "Active (Foreground)";
@@ -198,7 +188,6 @@ class MultiInstanceManager {
     return { success: true, status: newStatus };
   }
 
-  // Start LINE on all instances
   async startLineOnAll() {
     const results = [];
     for (const [deviceId] of this.instances) {
@@ -208,7 +197,6 @@ class MultiInstanceManager {
     return results;
   }
 
-  // Send to all friends on specific instance
   async sendOnInstance(deviceId, message, totalFriends, options = {}) {
     const instance = this.instances.get(deviceId);
     if (!instance) {
@@ -218,11 +206,10 @@ class MultiInstanceManager {
     return await instance.lineController.sendToAllFriends(message, totalFriends, options);
   }
 
-  // Send to all friends on ALL instances (parallel or sequential)
   async sendOnAllInstances(message, friendsPerInstance, options = {}) {
-    const { parallel = true } = options;
+    const { parallel = true, speed = 'fast' } = options;
     
-    this.log(`Starting multi-instance send (${parallel ? "parallel" : "sequential"} mode)`);
+    this.log(`Starting multi-instance send (${parallel ? "parallel" : "sequential"} mode, speed: ${speed})`);
     
     const results = {
       totalInstances: this.instances.size,
@@ -238,18 +225,18 @@ class MultiInstanceManager {
       this.io.emit("multi-start", {
         totalInstances: this.instances.size,
         mode: parallel ? "parallel" : "sequential",
+        speed,
       });
     }
 
     if (parallel) {
-      // ส่งพร้อมกันทุก instance
       const promises = [];
       
       for (const [deviceId, instance] of this.instances) {
         const totalFriends = friendsPerInstance[deviceId] || friendsPerInstance.default || 0;
         if (totalFriends > 0) {
           promises.push(
-            instance.lineController.sendToAllFriends(message, totalFriends, options)
+            instance.lineController.sendToAllFriends(message, totalFriends, { ...options, speed })
               .then(result => ({ deviceId, ...result }))
               .catch(error => ({ deviceId, success: false, error: error.message }))
           );
@@ -271,12 +258,11 @@ class MultiInstanceManager {
       }
 
     } else {
-      // ส่งทีละ instance
       for (const [deviceId, instance] of this.instances) {
         const totalFriends = friendsPerInstance[deviceId] || friendsPerInstance.default || 0;
         if (totalFriends > 0) {
           try {
-            const result = await instance.lineController.sendToAllFriends(message, totalFriends, options);
+            const result = await instance.lineController.sendToAllFriends(message, totalFriends, { ...options, speed });
             results.instanceResults.push({ deviceId, ...result });
             results.successInstances++;
             results.totalMessages += result.total || 0;
@@ -299,7 +285,6 @@ class MultiInstanceManager {
     return results;
   }
 
-  // Pause all instances
   pauseAll() {
     for (const [deviceId, instance] of this.instances) {
       instance.lineController.pause();
@@ -307,7 +292,6 @@ class MultiInstanceManager {
     this.log("All instances paused");
   }
 
-  // Resume all instances
   resumeAll() {
     for (const [deviceId, instance] of this.instances) {
       instance.lineController.resume();
@@ -315,7 +299,6 @@ class MultiInstanceManager {
     this.log("All instances resumed");
   }
 
-  // Stop all instances
   stopAll() {
     for (const [deviceId, instance] of this.instances) {
       instance.lineController.stop();
@@ -323,7 +306,6 @@ class MultiInstanceManager {
     this.log("All instances stopped");
   }
 
-  // Reset all instances
   resetAll() {
     for (const [deviceId, instance] of this.instances) {
       instance.lineController.reset();
@@ -331,7 +313,6 @@ class MultiInstanceManager {
     this.log("All instances reset");
   }
 
-  // Get combined status
   getCombinedStatus() {
     const statuses = [];
     let totalSent = 0;
@@ -362,7 +343,6 @@ class MultiInstanceManager {
     };
   }
 
-  // Save multi-instance state
   saveState() {
     const state = {
       lastUpdated: new Date().toISOString(),
@@ -373,11 +353,15 @@ class MultiInstanceManager {
       state.instances[deviceId] = instance.lineController.getStatus();
     }
 
+    const dataDir = path.join(__dirname, "data");
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
     fs.writeFileSync(this.stateFile, JSON.stringify(state, null, 2));
     return state;
   }
 
-  // Load multi-instance state
   loadState() {
     try {
       if (fs.existsSync(this.stateFile)) {
