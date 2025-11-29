@@ -408,19 +408,46 @@ class ADBController {
 
   getFriendsCount() {
     const dumpResult = this.exec("shell uiautomator dump /sdcard/ui.xml", { timeout: 10000 });
-    if (!dumpResult.success) return -1;
+    if (!dumpResult.success) {
+      console.log("[getFriendsCount] dump failed:", dumpResult.error);
+      return -1;
+    }
 
     const catResult = this.exec("shell cat /sdcard/ui.xml", { timeout: 10000 });
-    if (!catResult.success) return -1;
+    if (!catResult.success) {
+      console.log("[getFriendsCount] cat failed:", catResult.error);
+      return -1;
+    }
 
     const xml = catResult.output;
+    
+    // Debug: ดูว่ามี Friends อยู่ไหม
+    if (xml.includes("Friends")) {
+      console.log("[getFriendsCount] XML contains 'Friends'");
+    }
 
+    // Pattern 1: "Friends 2" (English)
     const engMatch = xml.match(/text="Friends\s+(\d+)"/i);
-    if (engMatch) return parseInt(engMatch[1]);
+    if (engMatch) {
+      console.log("[getFriendsCount] Matched:", engMatch[0], "Count:", engMatch[1]);
+      return parseInt(engMatch[1]);
+    }
 
+    // Pattern 2: "เพื่อน 123" (Thai)
     const thaiMatch = xml.match(/text="เพื่อน\s*(\d+)"/);
-    if (thaiMatch) return parseInt(thaiMatch[1]);
+    if (thaiMatch) {
+      console.log("[getFriendsCount] Matched Thai:", thaiMatch[0]);
+      return parseInt(thaiMatch[1]);
+    }
 
+    // Pattern 3: home_row_title_name with number
+    const rowMatch = xml.match(/home_row_title_name"[^>]*text="[A-Za-z\u0E00-\u0E7F]+\s*(\d+)"/);
+    if (rowMatch) {
+      console.log("[getFriendsCount] Matched row:", rowMatch[0]);
+      return parseInt(rowMatch[1]);
+    }
+
+    console.log("[getFriendsCount] No pattern matched");
     return -1;
   }
 
