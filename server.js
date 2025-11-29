@@ -1,7 +1,6 @@
 /**
- * LINE Web Automation Server
- * Express + Socket.IO + EJS + Multi-Instance Support
- * รองรับ Unicode/Thai/Emoji/URL และ Speed Settings
+ * LINE Web Automation Server v3.5
+ * - แก้ไขไม่ให้เรียก autoDetect ซ้ำ 2 ครั้ง
  */
 
 require("dotenv").config();
@@ -71,8 +70,9 @@ app.use(express.urlencoded({ extended: true }));
 
 // ==================== ROUTES ====================
 
+// หน้าแรก - ไม่ต้อง autoDetect ที่นี่ (ให้ Socket ทำแทน)
 app.get("/", async (req, res) => {
-  const instances = await multiManager.autoDetect();
+  const instances = multiManager.getInstancesInfo();
   const status = multiManager.getCombinedStatus();
   res.render("index", { instances, status, config });
 });
@@ -288,6 +288,7 @@ app.get("/api/logs", (req, res) => {
 io.on("connection", async (socket) => {
   console.log("Client connected");
 
+  // Auto-detect เมื่อ client connect (ครั้งเดียว)
   const instances = await multiManager.autoDetect();
   const status = multiManager.getCombinedStatus();
   
@@ -312,16 +313,15 @@ server.listen(config.port, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║     LINE Web Automation v3.1 (Clipper + Paste)                ║
+║     LINE Web Automation v3.5                                  ║
 ║     ─────────────────────────────────────────                 ║
 ║     Server running at http://${config.host}:${config.port}                  ║
 ║                                                               ║
 ║     Features:                                                 ║
 ║     • รองรับ ภาษาไทย / Emoji / URL (via Clipper)              ║
 ║     • Auto-detect BlueStacks instances                        ║
+║     • เรียง instance ตาม port (5555=#1, 5565=#2)              ║
 ║     • ปรับความเร็วได้ (Normal/Fast/Turbo)                     ║
-║     • Real-time progress tracking                             ║
-║     • Debug & verify text input                               ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);

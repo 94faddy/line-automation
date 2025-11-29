@@ -1,7 +1,9 @@
 /**
- * ADB Controller Module v3.2
- * รองรับ Unicode/Thai/Emoji/URL ผ่าน file + clipper.set + paste
- * แก้ปัญหาข้อความซ้ำโดย paste ทั้งข้อความในครั้งเดียว
+ * ADB Controller Module v3.5
+ * - เรียงลำดับ instances ตาม port (5555 = #1, 5565 = #2, ...)
+ * - แก้ไขปัญหาสถานะ instance แสดงสลับกัน
+ * - Auto-detect เร็ว (timeout 500ms, parallel connect)
+ * - กรอง duplicate instances
  */
 
 const { execSync } = require("child_process");
@@ -44,50 +46,100 @@ class ADBController {
     }
   }
 
+  /**
+   * ดึงรายการ devices และกรอง duplicate ออก
+   * - เลือก 127.0.0.1:XXXX แทน emulator-XXXX
+   * - เรียงลำดับตาม port (5555, 5565, 5575, ...)
+   */
   static getDevices(adbPath) {
     try {
       const result = execSync(`"${adbPath}" devices`, { encoding: "utf8" });
       const lines = result.split("\n").filter(line => line.includes("\tdevice"));
       
-      const devices = [];
-      const seenPorts = new Set();
+      const deviceMap = new Map(); // port -> deviceId
       
       for (const line of lines) {
         const [id] = line.split("\t");
         const deviceId = id.trim();
         
         let port = null;
+        let isIpFormat = false;
+        
         if (deviceId.includes(":")) {
+          // Format: 127.0.0.1:5555
           port = deviceId.split(":")[1];
+          isIpFormat = true;
         } else if (deviceId.startsWith("emulator-")) {
-          continue;
+          // Format: emulator-5554 (port จริงคือ 5554+1 = 5555)
+          const emulatorPort = parseInt(deviceId.replace("emulator-", ""));
+          port = String(emulatorPort + 1);
+          isIpFormat = false;
         }
         
-        if (port && seenPorts.has(port)) continue;
-        if (port) seenPorts.add(port);
-        
-        devices.push({ id: deviceId, status: "device", port });
+        if (port) {
+          // ถ้ามี port นี้แล้ว ให้เลือก IP format
+          if (deviceMap.has(port)) {
+            if (isIpFormat) {
+              deviceMap.set(port, { id: deviceId, port: parseInt(port), isIpFormat });
+            }
+          } else {
+            deviceMap.set(port, { id: deviceId, port: parseInt(port), isIpFormat });
+          }
+        }
       }
       
+      // แปลงเป็น array และ **เรียงตาม port**
+      const devices = Array.from(deviceMap.values())
+        .sort((a, b) => a.port - b.port)  // เรียงจาก port น้อย -> มาก
+        .map(d => ({
+          id: d.id,
+          status: "device",
+          port: String(d.port)
+        }));
+      
+      console.log(`[ADB] Found ${devices.length} device(s):`, devices.map(d => `${d.id} (port ${d.port})`).join(", "));
       return devices;
     } catch (error) {
+      console.log(`[ADB] Error getting devices: ${error.message}`);
       return [];
     }
   }
 
+  /**
+   * Auto-detect BlueStacks instances
+   * - เร็ว (timeout 500ms, parallel)
+   * - เรียงลำดับตาม port อัตโนมัติ
+   */
   static async autoDetectInstances(adbPath) {
-    let devices = ADBController.getDevices(adbPath);
+    console.log("[ADB] Auto-detecting BlueStacks instances...");
     
-    if (devices.length === 0) {
-      try {
-        execSync(`"${adbPath}" connect 127.0.0.1:5555`, { 
-          encoding: "utf8", timeout: 2000, stdio: 'pipe'
-        });
-        await new Promise(resolve => setTimeout(resolve, 300));
-        devices = ADBController.getDevices(adbPath);
-      } catch (e) {}
-    }
+    // BlueStacks ports: 5555, 5565, 5575, 5585
+    const possiblePorts = [5555, 5565, 5575, 5585];
     
+    // Connect แบบ parallel
+    const connectPromises = possiblePorts.map(port => {
+      return new Promise(resolve => {
+        try {
+          execSync(`"${adbPath}" connect 127.0.0.1:${port}`, { 
+            encoding: "utf8", 
+            timeout: 500,
+            stdio: 'pipe'
+          });
+          console.log(`[ADB] ✓ Port ${port} connected`);
+        } catch (e) {
+          // Port ไม่ได้เปิด
+        }
+        resolve();
+      });
+    });
+    
+    await Promise.all(connectPromises);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    // ดึงรายการ devices (เรียงตาม port แล้ว)
+    const devices = ADBController.getDevices(adbPath);
+    
+    console.log(`[ADB] Total: ${devices.length} instance(s)`);
     return devices;
   }
 
@@ -136,18 +188,11 @@ class ADBController {
   }
 
   // ============================================================
-  // TEXT INPUT - ใช้ไฟล์ + clipper.set + paste (ทั้งข้อความในครั้งเดียว)
+  // TEXT INPUT
   // ============================================================
 
-  /**
-   * เขียนข้อความลงไฟล์บน device แล้วใช้ clipper อ่าน
-   * วิธีนี้แก้ปัญหา space และ special characters
-   */
   writeTextToDevice(text) {
-    // เขียนข้อความเป็น base64 แล้ว decode บน device
     const base64 = Buffer.from(text, 'utf8').toString('base64');
-    
-    // เขียนลงไฟล์
     const writeResult = this.exec(`shell "echo '${base64}' | base64 -d > /data/local/tmp/msg.txt"`, { timeout: 5000 });
     
     if (!writeResult.success) {
@@ -158,11 +203,7 @@ class ADBController {
     return { success: true };
   }
 
-  /**
-   * อ่านข้อความจากไฟล์แล้วส่งเข้า clipboard
-   */
   setClipboardFromFile() {
-    // ใช้ cat อ่านไฟล์แล้วส่งเข้า clipper
     const result = this.exec(`shell "am broadcast -a clipper.set -e text \\"$(cat /data/local/tmp/msg.txt)\\""`, { timeout: 5000 });
     
     if (result.success && result.output.includes("Broadcast completed")) {
@@ -172,9 +213,6 @@ class ADBController {
     return { success: false, error: result.error || 'Broadcast failed' };
   }
 
-  /**
-   * ส่งข้อความไปยัง clipboard โดยตรง (สำหรับข้อความสั้นๆ ไม่มี space)
-   */
   setClipboard(text) {
     this.debug(`setClipboard: "${text}"`);
     const result = this.exec(`shell am broadcast -a clipper.set -e text "${text}"`);
@@ -190,10 +228,6 @@ class ADBController {
     return this.exec("shell input keyevent 279");
   }
 
-  /**
-   * พิมพ์ข้อความ - รองรับ ไทย/English/Emoji/URL/Newline
-   * ใช้วิธีเขียนไฟล์ + clipper + paste (ทั้งข้อความในครั้งเดียว)
-   */
   type(text, options = {}) {
     const debug = options.debug || this.debugMode;
     const startTime = Date.now();
@@ -203,11 +237,8 @@ class ADBController {
     }
 
     if (debug) console.log(`[TYPE] Input: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}" (${text.length} chars)`);
-
-    // วิธีที่ 1: ใช้ไฟล์ (รองรับทุกอย่างรวมถึง space และ newline)
     if (debug) console.log(`[TYPE] Method: File + Clipper (full message)`);
     
-    // 1. เขียนข้อความลงไฟล์
     const writeResult = this.writeTextToDevice(text);
     if (!writeResult.success) {
       if (debug) console.log(`[TYPE] ❌ Write to file failed: ${writeResult.error}`);
@@ -215,10 +246,8 @@ class ADBController {
     }
     if (debug) console.log(`[TYPE] ✓ Text written to device file`);
     
-    // รอให้ไฟล์เขียนเสร็จ
     this.sleep(100);
     
-    // 2. ส่งเข้า clipboard จากไฟล์
     const clipResult = this.setClipboardFromFile();
     if (!clipResult.success) {
       if (debug) console.log(`[TYPE] ❌ Clipboard from file failed: ${clipResult.error}`);
@@ -226,10 +255,8 @@ class ADBController {
     }
     if (debug) console.log(`[TYPE] ✓ Text copied to clipboard`);
     
-    // รอให้ clipboard พร้อม
     this.sleep(150);
     
-    // 3. Paste
     const pasteResult = this.paste();
     if (!pasteResult.success) {
       if (debug) console.log(`[TYPE] ❌ Paste failed: ${pasteResult.error}`);
@@ -237,10 +264,8 @@ class ADBController {
     }
     if (debug) console.log(`[TYPE] ✓ Text pasted`);
     
-    // รอให้ paste เสร็จสมบูรณ์
     this.sleep(300);
     
-    // 4. ลบไฟล์ชั่วคราว
     this.exec("shell rm -f /data/local/tmp/msg.txt");
 
     const elapsed = Date.now() - startTime;
@@ -263,9 +288,6 @@ class ADBController {
     while (Date.now() < end) {}
   }
 
-  /**
-   * ตรวจสอบว่ามีข้อความในช่อง input หรือไม่
-   */
   checkInputHasText() {
     const dumpResult = this.exec("shell uiautomator dump /sdcard/ui_check.xml", { timeout: 5000 });
     if (!dumpResult.success) {
@@ -280,7 +302,6 @@ class ADBController {
     }
 
     const xml = catResult.output;
-
     const editTextMatch = xml.match(/class="android\.widget\.EditText"[^>]*text="([^"]*)"/);
     
     if (editTextMatch) {
@@ -300,24 +321,16 @@ class ADBController {
   // LINE APP CONTROL
   // ============================================================
 
-  /**
-   * Force stop LINE app
-   */
   forceStopLine(linePackage) {
     this.debug(`Force stopping ${linePackage}`);
     return this.exec(`shell am force-stop ${linePackage}`);
   }
 
-  /**
-   * Start LINE app และรอให้เปิดเสร็จ
-   */
   startLineAndWait(linePackage, maxWaitMs = 10000) {
     this.debug(`Starting ${linePackage}`);
     
-    // เปิด LINE
     this.exec(`shell monkey -p ${linePackage} 1`);
     
-    // รอให้ LINE เปิดและมาอยู่ foreground
     const startTime = Date.now();
     while (Date.now() - startTime < maxWaitMs) {
       this.sleep(500);
@@ -330,21 +343,15 @@ class ADBController {
     return { success: false, error: 'Timeout waiting for LINE to start' };
   }
 
-  /**
-   * Restart LINE (force stop แล้วเปิดใหม่)
-   */
   restartLine(linePackage) {
     this.debug(`Restarting LINE...`);
     
-    // 1. Force stop
     this.forceStopLine(linePackage);
     this.sleep(1000);
     
-    // 2. Start และรอ
     const result = this.startLineAndWait(linePackage, 10000);
     
     if (result.success) {
-      // รอเพิ่มอีกนิดให้ UI โหลดเสร็จ
       this.sleep(2000);
     }
     
@@ -421,26 +428,22 @@ class ADBController {
 
     const xml = catResult.output;
     
-    // Debug: ดูว่ามี Friends อยู่ไหม
     if (xml.includes("Friends")) {
       console.log("[getFriendsCount] XML contains 'Friends'");
     }
 
-    // Pattern 1: "Friends 2" (English)
     const engMatch = xml.match(/text="Friends\s+(\d+)"/i);
     if (engMatch) {
       console.log("[getFriendsCount] Matched:", engMatch[0], "Count:", engMatch[1]);
       return parseInt(engMatch[1]);
     }
 
-    // Pattern 2: "เพื่อน 123" (Thai)
     const thaiMatch = xml.match(/text="เพื่อน\s*(\d+)"/);
     if (thaiMatch) {
       console.log("[getFriendsCount] Matched Thai:", thaiMatch[0]);
       return parseInt(thaiMatch[1]);
     }
 
-    // Pattern 3: home_row_title_name with number
     const rowMatch = xml.match(/home_row_title_name"[^>]*text="[A-Za-z\u0E00-\u0E7F]+\s*(\d+)"/);
     if (rowMatch) {
       console.log("[getFriendsCount] Matched row:", rowMatch[0]);

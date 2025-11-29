@@ -514,8 +514,12 @@ function clearLogs() {
 
 document.addEventListener("DOMContentLoaded", () => {
   setupSendAllToggle();
-  refreshInstances();
-  updateButtonStates(); // Set initial button states
+  setTimeout(() => {
+    if (instances.length === 0) {
+      refreshInstances();
+    }
+  }, 2000);
+  updateButtonStates();
   
   // Speed button highlight
   document.querySelectorAll('input[name="speed"]').forEach(radio => {
