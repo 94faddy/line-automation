@@ -127,18 +127,34 @@ function renderInstances() {
   const container = document.getElementById("instance-badges");
   
   if (instances.length === 0) {
-    container.innerHTML = `<span class="badge bg-secondary">ไม่พบ instance</span>`;
+    container.innerHTML = `<span class="instance-badge stopped"><i class="bi bi-phone-fill"></i> ไม่พบ instance</span>`;
     return;
   }
 
   container.innerHTML = instances.map((inst, idx) => {
     let cls = "instance-badge";
-    if (inst.status === "ready") cls += " ready";
-    else if (inst.status === "no-line") cls += " offline";
+    
+    // เพิ่ม class ตามสถานะ
+    switch (inst.status) {
+      case "ready":
+        cls += " ready";
+        break;
+      case "background":
+        cls += " background";
+        break;
+      case "stopped":
+        cls += " stopped";
+        break;
+      case "no-line":
+        cls += " no-line";
+        break;
+      default:
+        cls += " offline";
+    }
     
     return `
       <span class="${cls}">
-        <i class="bi bi-phone"></i> #${idx + 1}
+        <i class="bi bi-phone-fill"></i> #${idx + 1}
         ${inst.lineStatusText || inst.status}
       </span>
     `;
@@ -149,7 +165,7 @@ function renderInstanceSettings() {
   const container = document.getElementById("instance-inputs");
   
   if (instances.length === 0) {
-    container.innerHTML = `<p class="text-muted">ไม่พบ instance</p>`;
+    container.innerHTML = `<span class="instance-badge stopped"><i class="bi bi-phone-fill"></i> ไม่พบ instance</span>`;
     return;
   }
 

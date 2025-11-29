@@ -64,19 +64,19 @@ class MultiInstanceManager {
         let statusType = "stopped";
         switch (lineStatus) {
           case "foreground":
-            statusText = "Active (Foreground)";
+            statusText = "LINE เปิดอยู่";
             statusType = "ready";
             break;
           case "background":
-            statusText = "Background";
+            statusText = "LINE อยู่เบื้องหลัง";
             statusType = "background";
             break;
           case "stopped":
-            statusText = "Stopped";
+            statusText = "LINE ปิดอยู่";
             statusType = "stopped";
             break;
           case "not_installed":
-            statusText = "Not Installed";
+            statusText = "LINE ออฟไลน์";
             statusType = "no-line";
             break;
         }
@@ -122,19 +122,19 @@ class MultiInstanceManager {
       let statusType = "stopped";
       switch (lineStatus) {
         case "foreground":
-          statusText = "Active (Foreground)";
+          statusText = "LINE เปิดอยู่";
           statusType = "ready";
           break;
         case "background":
-          statusText = "Background";
+          statusText = "LINE อยู่เบื้องหลัง";
           statusType = "background";
           break;
         case "stopped":
-          statusText = "Stopped";
+          statusText = "LINE ปิดอยู่";
           statusType = "stopped";
           break;
         case "not_installed":
-          statusText = "Not Installed";
+          statusText = "LINE ออฟไลน์";
           statusType = "no-line";
           break;
       }

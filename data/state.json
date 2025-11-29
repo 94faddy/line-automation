@@ -5,16 +5,16 @@
     {
       "index": 0,
       "friendNum": 1,
-      "sentAt": "2025-11-29T04:52:43.784Z"
+      "sentAt": "2025-11-29T05:36:37.900Z"
     },
     {
       "index": 1,
       "friendNum": 2,
-      "sentAt": "2025-11-29T04:52:49.256Z"
+      "sentAt": "2025-11-29T05:36:46.277Z"
     }
   ],
   "failedFriends": [],
-  "lastUpdated": "2025-11-29T04:52:49.256Z",
+  "lastUpdated": "2025-11-29T05:36:46.278Z",
   "isRunning": true,
   "isPaused": false
 }

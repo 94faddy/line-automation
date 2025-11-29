@@ -108,20 +108,57 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: #e9ecef;
+  background: #6c757d;
   padding: 6px 12px;
   border-radius: 20px;
   font-size: 13px;
+  color: #fff;
 }
 
+.instance-badge i {
+  font-size: 14px;
+}
+
+/* LINE เปิดอยู่ - เขียว */
 .instance-badge.ready {
-  background: #d4edda;
-  color: #155724;
+  background: #0ac736;
+  color: #fff;
 }
 
-.instance-badge.offline {
-  background: #f8d7da;
-  color: #721c24;
+.instance-badge.ready i {
+  color: #fff;
+}
+
+/* LINE ทำงานเบื้องหลัง - เหลือง */
+.instance-badge.background {
+  background: #ffc107;
+  color: #000;
+}
+
+.instance-badge.background i {
+  color: #000;
+}
+
+/* LINE ปิดอยู่ - แดง */
+.instance-badge.stopped {
+  background: #dc3545;
+  color: #fff;
+}
+
+.instance-badge.stopped i {
+  color: #fff;
+}
+
+/* ไม่ได้ติดตั้ง LINE - เทาเข้ม */
+.instance-badge.offline,
+.instance-badge.no-line {
+  background: #343a40;
+  color: #fff;
+}
+
+.instance-badge.offline i,
+.instance-badge.no-line i {
+  color: #fff;
 }
 
 /* ==================== Message Input ==================== */
