@@ -3,91 +3,39 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LINE Automation v3.2</title>
+  <title>LINE Automation v4.0</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
   <link href="/css/style.css" rel="stylesheet">
 </head>
 <body>
 
-<!-- Top Control Bar - Always Visible -->
+<!-- Top Control Bar -->
 <div class="control-bar">
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div class="d-flex align-items-center gap-3">
       <h5 class="text-white mb-0">
-        <i class="bi bi-chat-dots-fill text-success"></i> LINE Automation
+        <i class="bi bi-chat-dots-fill text-success"></i> LINE Automation v4
       </h5>
-      <div id="instance-badges"></div>
     </div>
     <div class="d-flex gap-2 flex-wrap">
-      <button class="btn btn-success" onclick="startSendingAll()" id="btn-start">
+      <button class="btn btn-success" onclick="startSending()" id="btn-start">
         <i class="bi bi-send-fill"></i> ส่ง
       </button>
-      <button class="btn btn-warning" onclick="pauseAll()" id="btn-pause">
-        <i class="bi bi-pause-fill"></i> พัก
+      <button class="btn btn-warning" onclick="pauseAll()" id="btn-pause-all">
+        <i class="bi bi-pause-fill"></i> พักทั้งหมด
       </button>
-      <button class="btn btn-info" onclick="resumeAll()" id="btn-resume">
-        <i class="bi bi-play-fill"></i> ต่อ
+      <button class="btn btn-info" onclick="resumeAll()" id="btn-resume-all">
+        <i class="bi bi-play-fill"></i> ต่อทั้งหมด
       </button>
-      <button class="btn btn-danger" onclick="stopAll()" id="btn-stop">
-        <i class="bi bi-stop-fill"></i> หยุด
+      <button class="btn btn-danger" onclick="stopAll()" id="btn-stop-all">
+        <i class="bi bi-stop-fill"></i> หยุดทั้งหมด
       </button>
-      <button class="btn btn-secondary" onclick="resetAll()" id="btn-reset">
+      <button class="btn btn-secondary" onclick="resetAll()" id="btn-reset-all">
         <i class="bi bi-arrow-counterclockwise"></i>
       </button>
-      <button class="btn btn-outline-light" onclick="refreshInstances()" title="Refresh">
+      <button class="btn btn-outline-light" onclick="refreshInstances()" id="btn-refresh" title="Refresh">
         <i class="bi bi-arrow-clockwise"></i>
-      </button>
-    </div>
-  </div>
-</div>
-
-<!-- Progress Section -->
-<div class="progress-section" id="progress-section">
-  <div class="progress-stats">
-    <div class="stat">
-      <div class="stat-value text-primary" id="progress-current">0</div>
-      <div class="stat-label">ส่งแล้ว</div>
-    </div>
-    <div class="stat">
-      <div class="stat-value" id="progress-total">0</div>
-      <div class="stat-label">ทั้งหมด</div>
-    </div>
-    <div class="stat">
-      <div class="stat-value text-success" id="progress-success">0</div>
-      <div class="stat-label">สำเร็จ</div>
-    </div>
-    <div class="stat">
-      <div class="stat-value text-danger" id="progress-failed">0</div>
-      <div class="stat-label">ล้มเหลว</div>
-    </div>
-    <div class="flex-grow-1">
-      <div class="progress" style="height: 25px;">
-        <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" 
-             id="progress-bar" style="width: 0%">0%</div>
-      </div>
-    </div>
-    <div class="stat">
-      <div class="stat-value text-muted" id="progress-eta">--</div>
-      <div class="stat-label">เหลือ</div>
-    </div>
-  </div>
-</div>
-
-<!-- Saved State Alert -->
-<div class="alert alert-info m-3 mb-0" id="saved-state-alert" style="display: none;">
-  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <div>
-      <i class="bi bi-clock-history"></i>
-      <strong>มีการส่งค้างอยู่!</strong>
-      <span id="saved-state-info"></span>
-    </div>
-    <div>
-      <button class="btn btn-sm btn-primary me-2" onclick="startSendingAll()">
-        <i class="bi bi-play-fill"></i> ส่งต่อ
-      </button>
-      <button class="btn btn-sm btn-outline-danger" onclick="clearSavedState()">
-        <i class="bi bi-trash"></i> เริ่มใหม่
       </button>
     </div>
   </div>
@@ -103,12 +51,9 @@
     <div class="card">
       <div class="card-header">
         <i class="bi bi-chat-text"></i> ข้อความ
-        <!--<span class="badge bg-success ms-2">ไทย</span>
-        <span class="badge bg-primary">Emoji</span>
-        <span class="badge bg-info">URL</span>-->
       </div>
       <div class="card-body">
-        <textarea class="form-control message-input" id="message" rows="5" 
+        <textarea class="form-control message-input" id="message" rows="4" 
                   placeholder="พิมพ์ข้อความที่นี่...">สวัสดีครับ! 👋
 
 ข้อความทดสอบจาก LINE automation
@@ -127,66 +72,73 @@
       </div>
       <div class="card-body">
         
-        <div id="send-all-info" class="alert alert-success mb-3">
-          <i class="bi bi-people-fill"></i> จะส่งให้ <strong>เพื่อนทั้งหมด</strong> ในลิสต์
+        <div id="send-all-info" class="alert alert-success mb-3 py-2">
+          <i class="bi bi-people-fill"></i> จะส่งให้ <strong>เพื่อนทั้งหมด</strong> ในแต่ละ instance
         </div>
         
-        <div id="instance-settings" style="display: none;">
-          <label class="form-label">จำนวนเพื่อนที่จะส่ง</label>
-          <div id="instance-inputs"></div>
-        </div>
-        
-        <div class="mt-3">
-          <label class="form-label"><i class="bi bi-speedometer2"></i> ความเร็ว</label>
-          <div class="btn-group w-100">
-            <input type="radio" class="btn-check" name="speed" id="speed-normal" value="normal">
-            <label class="btn btn-outline-secondary speed-btn" for="speed-normal">🐢 ปกติ</label>
-            
-            <input type="radio" class="btn-check" name="speed" id="speed-fast" value="fast" checked>
-            <label class="btn btn-outline-secondary speed-btn" for="speed-fast">🚀 เร็ว</label>
-            
-            <input type="radio" class="btn-check" name="speed" id="speed-turbo" value="turbo">
-            <label class="btn btn-outline-secondary speed-btn" for="speed-turbo">⚡ เร็วมาก</label>
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label small"><i class="bi bi-speedometer2"></i> ความเร็ว</label>
+            <div class="btn-group w-100">
+              <input type="radio" class="btn-check" name="speed" id="speed-normal" value="normal">
+              <label class="btn btn-outline-secondary btn-sm speed-btn" for="speed-normal">x1</label>
+              
+              <input type="radio" class="btn-check" name="speed" id="speed-fast" value="fast" checked>
+              <label class="btn btn-outline-secondary btn-sm speed-btn" for="speed-fast">x2</label>
+              
+              <input type="radio" class="btn-check" name="speed" id="speed-turbo" value="turbo">
+              <label class="btn btn-outline-secondary btn-sm speed-btn" for="speed-turbo">x3</label>
+            </div>
+          </div>
+          <div class="col-6">
+            <label class="form-label small"><i class="bi bi-diagram-3"></i> โหมดส่ง</label>
+            <select class="form-select form-select-sm" id="send-mode">
+              <option value="parallel">ส่งพร้อมกัน</option>
+              <option value="sequential">ส่งทีละตัว</option>
+            </select>
           </div>
         </div>
         
-        <div class="mt-3">
-          <label class="form-label"><i class="bi bi-diagram-3"></i> โหมด</label>
-          <select class="form-select" id="send-mode">
-            <option value="parallel">Parallel (ส่งพร้อมกันทุก instance)</option>
-            <option value="sequential">Sequential (ส่งทีละ instance)</option>
-          </select>
+        <!-- Instance Selection -->
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <label class="form-label mb-0 small"><i class="bi bi-phone"></i> เลือก Instance</label>
+          <div>
+            <button class="btn btn-outline-primary btn-sm py-0" onclick="selectAllInstances()">เลือกทั้งหมด</button>
+            <button class="btn btn-outline-secondary btn-sm py-0" onclick="selectNoneInstances()">ไม่เลือก</button>
+          </div>
         </div>
         
       </div>
     </div>
     
-    <!-- Activity Card -->
+    <!-- Logs Card -->
     <div class="card">
-      <div class="card-header">
-        <i class="bi bi-list-check"></i> กิจกรรมล่าสุด
+      <div class="card-header d-flex justify-content-between align-items-center py-2">
+        <span><i class="bi bi-terminal"></i> Logs</span>
+        <button class="btn btn-sm btn-outline-secondary py-0" onclick="clearLogs()">
+          <i class="bi bi-trash"></i>
+        </button>
       </div>
-      <div class="card-body p-2 activity-body">
-        <div id="activity-list">
-          <p class="text-muted text-center mb-0 p-2">ยังไม่มีกิจกรรม</p>
+      <div class="card-body p-0">
+        <div class="log-box" id="log-box" style="height: 200px;">
+          <p class="text-muted">รอ logs...</p>
         </div>
       </div>
     </div>
     
   </div>
   
-  <!-- Right Panel - Logs -->
-  <div class="logs-panel">
+  <!-- Right Panel - Instance Cards -->
+  <div class="instances-panel">
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-terminal"></i> Logs</span>
-        <button class="btn btn-sm btn-outline-secondary" onclick="clearLogs()">
-          <i class="bi bi-trash"></i> ล้าง
-        </button>
+        <span><i class="bi bi-phone"></i> Instances</span>
+        <small class="text-muted">แต่ละ instance มี progress แยก</small>
       </div>
-      <div class="card-body p-0">
-        <div class="log-box" id="log-box">
-          <p class="text-muted">รอ logs...</p>
+      <div class="card-body p-2" id="instance-cards">
+        <!-- Instance cards will be rendered here -->
+        <div class="text-center text-muted py-4">
+          <i class="bi bi-arrow-clockwise"></i> กำลังโหลด...
         </div>
       </div>
     </div>
@@ -196,6 +148,12 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="/socket.io/socket.io.js"></script>
+<script>
+  // Config จาก server
+  window.APP_CONFIG = {
+    autoRefreshInterval: <%= typeof autoRefreshInterval !== 'undefined' ? autoRefreshInterval : 5 %>
+  };
+</script>
 <script src="/js/app.js"></script>
 </body>
 </html>

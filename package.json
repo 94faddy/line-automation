@@ -1,7 +1,7 @@
 {
   "name": "line-web-automation",
-  "version": "3.1.0",
-  "description": "LINE BlueStacks Automation - รองรับ ภาษาไทย/Emoji/URL (Clipper)",
+  "version": "4.0.0",
+  "description": "LINE BlueStacks Automation - Multi-Instance with Separate Progress",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

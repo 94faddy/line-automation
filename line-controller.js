@@ -1,8 +1,8 @@
 /**
- * LINE Controller Module v3.2
- * รองรับ Thai/Emoji/URL ผ่าน file + clipper + paste
- * - Paste ทั้งข้อความในครั้งเดียว (แก้ปัญหาข้อความซ้ำ)
- * - Restart LINE ก่อนส่งทุกครั้ง (แก้ปัญหาหน้าแชทค้าง)
+ * LINE Controller Module v4.0
+ * - State file แยกตาม deviceId
+ * - รองรับ multi-instance progress tracking
+ * - Thai/Emoji/URL ผ่าน file + clipper + paste
  */
 
 const fs = require("fs");
@@ -14,6 +14,7 @@ class LineController {
     this.config = config;
     this.io = io;
     this.adb = new ADBController(config.adbPath, config.deviceId);
+    this.deviceId = config.deviceId;
     this.isRunning = false;
     this.isPaused = false;
     this.shouldStop = false;
@@ -21,17 +22,21 @@ class LineController {
     this.totalFriends = 0;
     this.sentFriends = [];
     this.failedFriends = [];
-    this.stateFile = path.join(__dirname, "data", "state.json");
+    
+    // State file แยกตาม deviceId
+    const safeDeviceId = this.deviceId.replace(/[:.]/g, '_');
+    this.stateFile = path.join(__dirname, "data", `state_${safeDeviceId}.json`);
+    
     this.speedMultiplier = 1.0;
     this.debugMode = true;
-    this.restartLineBeforeSend = true; // รีสตาร์ท LINE ก่อนส่งทุกครั้ง
+    this.restartLineBeforeSend = true;
   }
 
   log(message, type = "info") {
     const timestamp = new Date().toISOString();
-    const logEntry = { timestamp, type, message };
+    const logEntry = { timestamp, type, message, deviceId: this.deviceId };
     
-    console.log(`[${timestamp}] [${type.toUpperCase()}] ${message}`);
+    console.log(`[${timestamp}] [${this.deviceId}] [${type.toUpperCase()}] ${message}`);
     
     if (this.io) {
       this.io.emit("log", logEntry);
@@ -42,12 +47,16 @@ class LineController {
       fs.mkdirSync(logDir, { recursive: true });
     }
     const logFile = path.join(logDir, `${new Date().toISOString().split("T")[0]}.log`);
-    fs.appendFileSync(logFile, `[${timestamp}] [${type.toUpperCase()}] ${message}\n`);
+    fs.appendFileSync(logFile, `[${timestamp}] [${this.deviceId}] [${type.toUpperCase()}] ${message}\n`);
   }
 
   emitStatus(data) {
     if (this.io) {
-      this.io.emit("status", data);
+      // เพิ่ม deviceId ในทุก status event
+      this.io.emit("instance-status", { 
+        ...data, 
+        deviceId: this.deviceId 
+      });
     }
   }
 
@@ -72,6 +81,7 @@ class LineController {
     }
     
     const state = {
+      deviceId: this.deviceId,
       currentIndex: this.currentIndex,
       totalFriends: this.totalFriends,
       sentFriends: this.sentFriends,
@@ -116,21 +126,16 @@ class LineController {
     await this.wait(this.config.delays.pageLoad * 0.7);
   }
 
-  /**
-   * Restart LINE app (force stop แล้วเปิดใหม่)
-   * ใช้ก่อนเริ่มส่งทุกครั้งเพื่อให้แน่ใจว่าอยู่หน้า Home
-   */
   async restartLine() {
     const linePackage = this.config.linePackage;
     
     this.log("🔄 Restarting LINE app...", "info");
+    this.emitStatus({ type: "restarting" });
     
-    // 1. Force stop LINE
     this.log("   Stopping LINE...");
     this.adb.forceStopLine(linePackage);
     await this.wait(1500);
     
-    // 2. Start LINE และรอให้เปิด
     this.log("   Starting LINE...");
     const startResult = this.adb.startLineAndWait(linePackage, 15000);
     
@@ -140,15 +145,12 @@ class LineController {
       this.log(`   ✓ LINE started in ${startResult.waitTime}ms`);
     }
     
-    // 3. รอให้ UI โหลด
     await this.wait(2000);
     
-    // 4. กด Home button ใน LINE
     this.log("   Going to LINE Home...");
     this.adb.tap(this.config.coords.homeX, this.config.coords.homeY);
     await this.wait(1500);
     
-    // 5. กดอีกครั้งให้แน่ใจ
     this.adb.tap(this.config.coords.homeX, this.config.coords.homeY);
     await this.wait(1000);
     
@@ -185,27 +187,20 @@ class LineController {
     return { connected: true, deviceId: this.config.deviceId, screenSize, lineInstalled, lineRunning };
   }
 
-  /**
-   * ส่งข้อความหาเพื่อนคนที่ index
-   */
   async sendToFriend(friendIndex, message) {
     const coords = this.config.coords;
     const d = this.config.delays;
     const friendNum = friendIndex + 1;
     
     try {
-      // ==================== STEP 1: ไปหน้า Home ของ LINE ====================
       this.log(`[#${friendNum}] Step 1: Going to LINE Home...`);
-      // กด Home button ของ LINE (ไม่ใช่ Back เพราะจะออกจาก app)
       this.adb.tap(coords.homeX, coords.homeY);
       await this.wait(600);
       
-      // ==================== STEP 2: เปิด Friend list ====================
       this.log(`[#${friendNum}] Step 2: Opening Friend list...`);
       this.adb.tap(coords.friendsX, coords.friendsY);
       await this.wait(d.pageLoad * 0.8);
 
-      // ==================== STEP 3: Scroll ถ้าจำเป็น ====================
       const itemsPerScreen = 15;
       const screenIndex = Math.floor(friendIndex / itemsPerScreen);
       const positionInScreen = friendIndex % itemsPerScreen;
@@ -219,62 +214,46 @@ class LineController {
         await this.wait(500);
       }
 
-      // ==================== STEP 4: Tap เพื่อน ====================
       const friendY = coords.friendStartY + (positionInScreen * coords.friendHeight);
       this.log(`[#${friendNum}] Step 4: Tapping friend at (${coords.friendStartX}, ${friendY})...`);
       this.adb.tap(coords.friendStartX, friendY);
       await this.wait(d.pageLoad * 0.8);
 
-      // ==================== STEP 5: กด Chat button ====================
-      this.log(`[#${friendNum}] Step 5: Tapping Chat button at (${coords.chatBtnX}, ${coords.chatBtnY})...`);
+      this.log(`[#${friendNum}] Step 5: Tapping Chat button...`);
       this.adb.tap(coords.chatBtnX, coords.chatBtnY);
       await this.wait(d.pageLoad * 0.8);
 
-      // ==================== STEP 6: Clear clipboard ก่อน ====================
       this.log(`[#${friendNum}] Step 6: Clearing old clipboard...`);
-      this.adb.setClipboard(""); // Clear clipboard
+      this.adb.setClipboard("");
       await this.wait(200);
 
-      // ==================== STEP 7: กดช่อง input ====================
-      this.log(`[#${friendNum}] Step 7: Tapping input field at (${coords.inputX}, ${coords.inputY})...`);
-      
-      // กด 2 ครั้งให้แน่ใจว่า focus
+      this.log(`[#${friendNum}] Step 7: Tapping input field...`);
       this.adb.tap(coords.inputX, coords.inputY);
       await this.wait(400);
       this.adb.tap(coords.inputX, coords.inputY);
       await this.wait(500);
 
-      // ==================== STEP 8: พิมพ์ข้อความ ====================
       this.log(`[#${friendNum}] Step 8: Typing message (${message.length} chars)...`);
-      
       const typeResult = this.adb.type(message, { debug: this.debugMode });
-      
-      this.log(`[#${friendNum}] Type result: method=${typeResult.method}, success=${typeResult.success}, elapsed=${typeResult.elapsed}ms`);
       
       if (!typeResult.success) {
         this.log(`[#${friendNum}] ⚠️ Type failed: ${typeResult.error}`, "warn");
-        // ลอง retry
         await this.wait(500);
         this.adb.tap(coords.inputX, coords.inputY);
         await this.wait(400);
         this.adb.type(message);
       }
 
-      // ==================== STEP 9: รอให้ข้อความปรากฏ ====================
-      this.log(`[#${friendNum}] Step 9: Waiting for text to appear...`);
-      await this.wait(800); // รอนานขึ้น
+      this.log(`[#${friendNum}] Step 9: Waiting for text...`);
+      await this.wait(800);
 
-      // ==================== STEP 10: กดปุ่มส่ง ====================
-      this.log(`[#${friendNum}] Step 10: Pressing send button at (${coords.sendX}, ${coords.sendY})...`);
+      this.log(`[#${friendNum}] Step 10: Pressing send button...`);
       this.adb.tap(coords.sendX, coords.sendY);
       await this.wait(d.afterSend * 0.7);
 
-      // ==================== STEP 11: กลับหน้า Home ====================
       this.log(`[#${friendNum}] Step 11: Going back to LINE home...`);
-      // กด Back 1 ครั้งเพื่อออกจากแชท
       this.adb.pressBack();
       await this.wait(600);
-      // กด Home button ของ LINE
       this.adb.tap(coords.homeX, coords.homeY);
       await this.wait(600);
 
@@ -283,16 +262,12 @@ class LineController {
 
     } catch (error) {
       this.log(`[#${friendNum}] ❌ Error: ${error.message}`, "error");
-      // พยายามกลับ Home ถ้าเกิด error
       this.adb.tap(coords.homeX, coords.homeY);
       await this.wait(300);
       return { success: false, error: error.message };
     }
   }
 
-  /**
-   * ส่งข้อความหาเพื่อนทั้งหมด
-   */
   async sendToAllFriends(message, totalFriends, options = {}) {
     const { startFrom = 0, limit = 0, sendAll = false, speed = 'fast', forceRestart = false } = options;
     
@@ -300,27 +275,27 @@ class LineController {
     this.isRunning = true;
     this.shouldStop = false;
     
-    // ==================== RESTART LINE ====================
     this.log("========== PREPARING TO SEND ==========", "info");
+    this.emitStatus({ type: "preparing" });
     
     if (this.restartLineBeforeSend) {
       await this.restartLine();
     }
     
-    // เช็ค clipper service
     this.log("Checking clipper service...");
     const clipperCheck = this.adb.checkClipperService();
     if (!clipperCheck.available) {
       this.log("⚠️ Clipper service may not be available!", "warn");
+      this.emitStatus({ type: "error", message: "Clipper service not available" });
     } else {
       this.log("✓ Clipper service is available", "success");
     }
 
-    // ==================== DETECT FRIENDS COUNT (ทุกครั้ง) ====================
     let actualTotalFriends = totalFriends;
     
     if (sendAll || totalFriends >= 9999) {
       this.log("Detecting actual friends count...", "info");
+      this.emitStatus({ type: "detecting-friends" });
       
       await this.goHome();
       await this.wait(700);
@@ -345,56 +320,35 @@ class LineController {
       await this.wait(700);
       await this.goHome();
       await this.wait(700);
-    } else {
-      actualTotalFriends = totalFriends;
     }
 
-    // ==================== CHECK SAVED STATE ====================
     const savedState = this.loadState();
     let resumeFromSaved = false;
     
     if (savedState && savedState.currentIndex > 0 && !forceRestart) {
-      this.log(``, "info");
-      this.log(`📋 Found saved state:`, "info");
-      this.log(`   Previous: ${savedState.currentIndex}/${savedState.totalFriends} friends sent`, "info");
-      this.log(`   Current:  ${actualTotalFriends} friends detected now`, "info");
-      this.log(`   ✅ Success: ${savedState.sentFriends?.length || 0}, ❌ Failed: ${savedState.failedFriends?.length || 0}`, "info");
-      this.log(`   Last updated: ${savedState.lastUpdated}`, "info");
+      this.log(`📋 Found saved state: ${savedState.currentIndex}/${savedState.totalFriends}`, "info");
       
-      // ตรวจสอบว่าส่งครบแล้วหรือยัง
       if (savedState.currentIndex >= actualTotalFriends) {
-        // ส่งครบแล้ว → เริ่มใหม่
-        this.log(``, "info");
-        this.log(`✅ Previous session completed (${savedState.currentIndex}/${savedState.totalFriends})`, "success");
-        this.log(`🔄 Starting fresh from friend #1...`, "info");
+        this.log(`✅ Previous session completed, starting fresh`, "success");
         this.currentIndex = 0;
         this.sentFriends = [];
         this.failedFriends = [];
         this.clearState();
-      }
-      // ตรวจสอบว่าจำนวนเพื่อนเปลี่ยนหรือไม่
-      else if (savedState.totalFriends !== actualTotalFriends) {
-        this.log(``, "warn");
-        this.log(`⚠️ Friends count changed: ${savedState.totalFriends} → ${actualTotalFriends}`, "warn");
-        
+      } else if (savedState.totalFriends !== actualTotalFriends) {
         if (actualTotalFriends < savedState.currentIndex) {
-          // เพื่อนน้อยกว่าที่ส่งไปแล้ว → ต้องเริ่มใหม่
-          this.log(`⚠️ Friends count (${actualTotalFriends}) < sent count (${savedState.currentIndex})`, "warn");
-          this.log(`🔄 Starting fresh from friend #1`, "info");
+          this.log(`⚠️ Friends count changed, starting fresh`, "warn");
           this.currentIndex = 0;
           this.sentFriends = [];
           this.failedFriends = [];
           this.clearState();
         } else {
-          // เพื่อนยังมากพอ → resume ได้
-          this.log(`✓ Can still resume from friend #${savedState.currentIndex + 1}`, "info");
+          this.log(`✓ Resuming from friend #${savedState.currentIndex + 1}`, "info");
           this.currentIndex = savedState.currentIndex;
           this.sentFriends = savedState.sentFriends || [];
           this.failedFriends = savedState.failedFriends || [];
           resumeFromSaved = true;
         }
       } else {
-        // จำนวนเพื่อนเท่าเดิม และยังไม่ครบ → resume ปกติ
         this.currentIndex = savedState.currentIndex;
         this.sentFriends = savedState.sentFriends || [];
         this.failedFriends = savedState.failedFriends || [];
@@ -402,7 +356,6 @@ class LineController {
       }
       
       if (resumeFromSaved) {
-        this.log(``, "info");
         this.log(`🔄 Resuming from friend #${this.currentIndex + 1}...`, "info");
         this.emitStatus({ 
           type: "resume", 
@@ -413,7 +366,6 @@ class LineController {
         });
       }
     } else {
-      // ไม่มี saved state → เริ่มใหม่
       this.currentIndex = startFrom;
       this.sentFriends = [];
       this.failedFriends = [];
@@ -431,8 +383,7 @@ class LineController {
     }
 
     this.log(`Starting to send messages to ${totalToSend} friends (speed: ${speed})`, "info");
-    this.log(`Message: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`, "info");
-    this.emitStatus({ type: "start", total: totalToSend, current: 0 });
+    this.emitStatus({ type: "start", total: totalToSend, totalFriends: actualTotalFriends, current: 0 });
 
     const startIndex = this.currentIndex;
     const startTime = Date.now();
@@ -440,6 +391,7 @@ class LineController {
     for (let i = startIndex; i < endIndex; i++) {
       if (this.shouldStop) {
         this.log("Stopped by user", "warn");
+        this.emitStatus({ type: "stopped" });
         break;
       }
 
@@ -459,8 +411,7 @@ class LineController {
       const avgTimePerFriend = elapsed / progress;
       const remaining = Math.round((totalToSend - progress) * avgTimePerFriend / 1000);
 
-      this.log(`\n========== [${progress}/${totalToSend}] (${percent}%) Friend #${friendNum} ==========`);
-      this.log(`ETA: ${remaining}s remaining`);
+      this.log(`[${progress}/${totalToSend}] (${percent}%) Friend #${friendNum}`);
 
       const result = await this.sendToFriend(i, message);
 
@@ -468,15 +419,32 @@ class LineController {
         this.sentFriends.push({ index: i, friendNum, sentAt: new Date().toISOString() });
         this.log(`✅ Friend #${friendNum} - SUCCESS`, "success");
         this.emitStatus({
-          type: "sent", current: progress, total: totalToSend, percent, friendNum,
-          success: true, eta: remaining
+          type: "sent", 
+          current: progress, 
+          total: totalToSend, 
+          totalFriends: actualTotalFriends,
+          percent, 
+          friendNum,
+          success: true, 
+          eta: remaining,
+          sentCount: this.sentFriends.length,
+          failedCount: this.failedFriends.length
         });
       } else {
         this.failedFriends.push({ index: i, friendNum, error: result.error });
         this.log(`❌ Friend #${friendNum} - FAILED: ${result.error}`, "error");
         this.emitStatus({
-          type: "sent", current: progress, total: totalToSend, percent, friendNum,
-          success: false, error: result.error
+          type: "sent", 
+          current: progress, 
+          total: totalToSend,
+          totalFriends: actualTotalFriends,
+          percent, 
+          friendNum,
+          success: false, 
+          error: result.error,
+          eta: remaining,
+          sentCount: this.sentFriends.length,
+          failedCount: this.failedFriends.length
         });
       }
 
@@ -502,13 +470,13 @@ class LineController {
       avgTimePerFriend: Math.round(totalTime / totalToSend * 10) / 10,
     };
 
-    this.log(`\n========== COMPLETED ==========`, "info");
-    this.log(`Total time: ${totalTime}s`, "info");
-    this.log(`Success: ${summary.success}, Failed: ${summary.failed}`, summary.failed > 0 ? "warn" : "success");
+    this.log(`========== COMPLETED ==========`, "info");
+    this.log(`Total time: ${totalTime}s, Success: ${summary.success}, Failed: ${summary.failed}`, 
+             summary.failed > 0 ? "warn" : "success");
     
     this.emitStatus({ type: "complete", summary });
 
-    if (this.currentIndex >= totalFriends) {
+    if (this.currentIndex >= this.totalFriends) {
       this.clearState();
     }
 
@@ -540,6 +508,9 @@ class LineController {
     this.isPaused = false;
     this.shouldStop = false;
     this.currentIndex = 0;
+    this.totalFriends = 0;
+    this.sentFriends = [];
+    this.failedFriends = [];
     this.log("Reset complete", "info");
     this.emitStatus({ type: "reset" });
   }
@@ -547,6 +518,7 @@ class LineController {
   getStatus() {
     const state = this.loadState();
     return {
+      deviceId: this.deviceId,
       isRunning: this.isRunning,
       isPaused: this.isPaused,
       currentIndex: state?.currentIndex || 0,
@@ -560,23 +532,18 @@ class LineController {
     };
   }
 
-  /**
-   * ตรวจสอบว่ามี state ที่บันทึกไว้หรือไม่
-   */
   hasSavedState() {
     const state = this.loadState();
     return state && state.currentIndex > 0 && state.currentIndex < state.totalFriends;
   }
 
-  /**
-   * ดึงข้อมูล saved state
-   */
   getSavedStateInfo() {
     const state = this.loadState();
     if (!state || state.currentIndex === 0) {
       return null;
     }
     return {
+      deviceId: this.deviceId,
       currentIndex: state.currentIndex,
       totalFriends: state.totalFriends,
       sentCount: state.sentFriends?.length || 0,

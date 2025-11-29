@@ -1,6 +1,8 @@
 /**
- * Multi-Instance Manager
- * จัดการหลาย BlueStacks instances พร้อมกัน
+ * Multi-Instance Manager v4.0
+ * - รองรับการเลือก instance ที่ต้องการส่ง
+ * - Progress tracking แยกแต่ละ instance
+ * - State file แยกแต่ละ instance
  */
 
 const fs = require("fs");
@@ -48,8 +50,6 @@ class MultiInstanceManager {
         const lineInstalled = adb.isLineInstalled(this.config.linePackage);
         const lineStatus = adb.getLineStatus(this.config.linePackage);
         const model = adb.getDeviceModel();
-        
-        // เช็ค clipper service แทน ADBKeyboard
         const clipperCheck = adb.checkClipperService();
         
         const instanceConfig = {
@@ -76,10 +76,13 @@ class MultiInstanceManager {
             statusType = "stopped";
             break;
           case "not_installed":
-            statusText = "LINE ออฟไลน์";
+            statusText = "ไม่ได้ติดตั้ง LINE";
             statusType = "no-line";
             break;
         }
+        
+        // ดึง saved state ของ instance นี้
+        const savedState = lineController.getSavedStateInfo();
         
         const info = {
           deviceId: device.id,
@@ -89,8 +92,12 @@ class MultiInstanceManager {
           lineInstalled,
           lineStatus,
           lineStatusText: statusText,
-          status: statusType,
+          statusType: statusType, // สำหรับแสดง badge
+          status: "device", // สำหรับตรวจสอบ (ถ้า detect ได้ = device)
           clipperAvailable: clipperCheck.available,
+          savedState: savedState,
+          isRunning: lineController.isRunning,
+          isPaused: lineController.isPaused,
         };
         
         this.instances.set(device.id, {
@@ -102,7 +109,8 @@ class MultiInstanceManager {
         instanceList.push(info);
         
         const clipperStatus = clipperCheck.available ? "✓ Clipper" : "⚠ No Clipper";
-        this.log(`Instance ${device.id}: ${model}, LINE: ${statusText}, ${clipperStatus}`, "info", device.id);
+        const stateInfo = savedState ? ` (${savedState.currentIndex}/${savedState.totalFriends} sent)` : "";
+        this.log(`Instance ${device.id}: ${model}, LINE: ${statusText}, ${clipperStatus}${stateInfo}`, "info", device.id);
       }
     }
 
@@ -117,6 +125,7 @@ class MultiInstanceManager {
     const list = [];
     for (const [deviceId, instance] of this.instances) {
       const lineStatus = instance.adb.getLineStatus(this.config.linePackage);
+      const isConnected = instance.adb.isConnected();
       
       let statusText = "Unknown";
       let statusType = "stopped";
@@ -134,15 +143,52 @@ class MultiInstanceManager {
           statusType = "stopped";
           break;
         case "not_installed":
-          statusText = "LINE ออฟไลน์";
+          statusText = "ไม่ได้ติดตั้ง LINE";
           statusType = "no-line";
           break;
       }
       
+      // ดึง saved state
+      const savedState = instance.lineController.getSavedStateInfo();
+      
       instance.info.lineStatus = lineStatus;
       instance.info.lineStatusText = statusText;
-      instance.info.status = statusType;
+      instance.info.statusType = statusType; // สำหรับแสดง badge
+      instance.info.status = isConnected ? "device" : "offline"; // สำหรับตรวจสอบ
+      instance.info.savedState = savedState;
+      instance.info.isRunning = instance.lineController.isRunning;
+      instance.info.isPaused = instance.lineController.isPaused;
+      
       list.push(instance.info);
+    }
+    return list;
+  }
+
+  // สำหรับ auto-refresh status เบาๆ (ไม่โหลด savedState ใหม่)
+  getInstancesStatus() {
+    const list = [];
+    for (const [deviceId, instance] of this.instances) {
+      const lineStatus = instance.adb.getLineStatus(this.config.linePackage);
+      const clipperCheck = instance.adb.checkClipperService();
+      
+      // คำนวณ statusType จาก lineStatus
+      let statusType = "stopped";
+      switch (lineStatus) {
+        case "foreground": statusType = "ready"; break;
+        case "background": statusType = "background"; break;
+        case "stopped": statusType = "stopped"; break;
+        case "not_installed": statusType = "no-line"; break;
+      }
+      
+      list.push({
+        deviceId: deviceId,
+        lineStatus: lineStatus,
+        statusType: statusType,
+        status: instance.adb.isConnected() ? "device" : "offline",
+        clipperAvailable: clipperCheck.available,
+        isRunning: instance.lineController.isRunning,
+        isPaused: instance.lineController.isPaused
+      });
     }
     return list;
   }
@@ -160,24 +206,21 @@ class MultiInstanceManager {
     this.log(`Opening LINE app...`, "info", deviceId);
     
     const result = instance.adb.exec(`shell monkey -p ${this.config.linePackage} 1`);
-    this.log(`Command result: ${result.output || result.error || 'OK'}`, "info", deviceId);
     
     await new Promise(resolve => setTimeout(resolve, 3000));
     
-    this.log(`Tapping LINE Home button...`, "info", deviceId);
     instance.adb.tap(this.config.coords.homeX, this.config.coords.homeY);
     await new Promise(resolve => setTimeout(resolve, 1500));
     
     const newStatus = instance.adb.getLineStatus(this.config.linePackage);
-    this.log(`LINE status: ${newStatus}`, "info", deviceId);
     
     instance.info.lineStatus = newStatus;
     if (newStatus === "foreground") {
-      instance.info.lineStatusText = "Active (Foreground)";
+      instance.info.lineStatusText = "LINE เปิดอยู่";
       instance.info.status = "ready";
       this.log(`LINE opened successfully!`, "success", deviceId);
     } else {
-      instance.info.lineStatusText = newStatus === "background" ? "Background" : "Stopped";
+      instance.info.lineStatusText = newStatus === "background" ? "LINE อยู่เบื้องหลัง" : "LINE ปิดอยู่";
       instance.info.status = newStatus === "background" ? "background" : "stopped";
     }
     
@@ -197,92 +240,154 @@ class MultiInstanceManager {
     return results;
   }
 
-  async sendOnInstance(deviceId, message, totalFriends, options = {}) {
-    const instance = this.instances.get(deviceId);
-    if (!instance) {
-      return { success: false, error: "Instance not found" };
-    }
-
-    return await instance.lineController.sendToAllFriends(message, totalFriends, options);
-  }
-
-  async sendOnAllInstances(message, friendsPerInstance, options = {}) {
-    const { parallel = true, speed = 'fast' } = options;
+  /**
+   * ส่งข้อความไปยัง instances ที่เลือก
+   * @param {string} message - ข้อความที่จะส่ง
+   * @param {Object} selectedInstances - { deviceId: { enabled: true, friendCount: 9999 }, ... }
+   * @param {Object} options - { parallel, sendAll, speed }
+   */
+  async sendOnSelectedInstances(message, selectedInstances, options = {}) {
+    const { parallel = true, sendAll = false, speed = 'fast' } = options;
     
-    this.log(`Starting multi-instance send (${parallel ? "parallel" : "sequential"} mode, speed: ${speed})`);
+    // กรองเฉพาะ instance ที่เลือก
+    const enabledInstances = Object.entries(selectedInstances)
+      .filter(([deviceId, config]) => config.enabled && this.instances.has(deviceId))
+      .map(([deviceId, config]) => ({
+        deviceId,
+        friendCount: sendAll ? 9999 : (config.friendCount || 0)
+      }));
+    
+    if (enabledInstances.length === 0) {
+      this.log("No instances selected", "warn");
+      return { success: false, error: "No instances selected" };
+    }
+    
+    this.log(`Starting send on ${enabledInstances.length} instance(s) (${parallel ? "parallel" : "sequential"} mode, speed: ${speed})`);
     
     const results = {
-      totalInstances: this.instances.size,
+      totalInstances: enabledInstances.length,
       successInstances: 0,
       failedInstances: 0,
-      totalMessages: 0,
-      successMessages: 0,
-      failedMessages: 0,
       instanceResults: [],
     };
 
     if (this.io) {
       this.io.emit("multi-start", {
-        totalInstances: this.instances.size,
+        totalInstances: enabledInstances.length,
+        instances: enabledInstances.map(i => i.deviceId),
         mode: parallel ? "parallel" : "sequential",
         speed,
       });
     }
 
     if (parallel) {
-      const promises = [];
-      
-      for (const [deviceId, instance] of this.instances) {
-        const totalFriends = friendsPerInstance[deviceId] || friendsPerInstance.default || 0;
-        if (totalFriends > 0) {
-          promises.push(
-            instance.lineController.sendToAllFriends(message, totalFriends, { ...options, speed })
-              .then(result => ({ deviceId, ...result }))
-              .catch(error => ({ deviceId, success: false, error: error.message }))
-          );
+      const promises = enabledInstances.map(({ deviceId, friendCount }) => {
+        const instance = this.instances.get(deviceId);
+        if (!instance || friendCount <= 0) {
+          return Promise.resolve({ deviceId, success: false, error: "Invalid config" });
         }
-      }
+        
+        return instance.lineController.sendToAllFriends(message, friendCount, { 
+          sendAll: friendCount >= 9999, 
+          speed 
+        })
+          .then(result => ({ deviceId, ...result }))
+          .catch(error => ({ deviceId, success: false, error: error.message }));
+      });
 
       const instanceResults = await Promise.all(promises);
       
       for (const result of instanceResults) {
         results.instanceResults.push(result);
-        if (result.success !== false) {
-          results.successInstances++;
-          results.totalMessages += result.total || 0;
-          results.successMessages += result.success || 0;
-          results.failedMessages += result.failed || 0;
-        } else {
+        if (result.error) {
           results.failedInstances++;
+        } else {
+          results.successInstances++;
         }
       }
 
     } else {
-      for (const [deviceId, instance] of this.instances) {
-        const totalFriends = friendsPerInstance[deviceId] || friendsPerInstance.default || 0;
-        if (totalFriends > 0) {
-          try {
-            const result = await instance.lineController.sendToAllFriends(message, totalFriends, { ...options, speed });
-            results.instanceResults.push({ deviceId, ...result });
-            results.successInstances++;
-            results.totalMessages += result.total || 0;
-            results.successMessages += result.success || 0;
-            results.failedMessages += result.failed || 0;
-          } catch (error) {
-            results.instanceResults.push({ deviceId, success: false, error: error.message });
-            results.failedInstances++;
-          }
+      for (const { deviceId, friendCount } of enabledInstances) {
+        const instance = this.instances.get(deviceId);
+        if (!instance || friendCount <= 0) {
+          results.instanceResults.push({ deviceId, success: false, error: "Invalid config" });
+          results.failedInstances++;
+          continue;
+        }
+        
+        try {
+          const result = await instance.lineController.sendToAllFriends(message, friendCount, { 
+            sendAll: friendCount >= 9999, 
+            speed 
+          });
+          results.instanceResults.push({ deviceId, ...result });
+          results.successInstances++;
+        } catch (error) {
+          results.instanceResults.push({ deviceId, success: false, error: error.message });
+          results.failedInstances++;
         }
       }
     }
 
-    this.log(`Multi-instance send completed: ${results.successMessages}/${results.totalMessages} messages sent`);
+    this.log(`Multi-instance send completed: ${results.successInstances}/${results.totalInstances} instances`);
     
     if (this.io) {
       this.io.emit("multi-complete", results);
     }
 
     return results;
+  }
+
+  // Legacy method for backward compatibility
+  async sendOnAllInstances(message, friendsPerInstance, options = {}) {
+    const { parallel = true, sendAll = false, speed = 'fast' } = options;
+    
+    // แปลง friendsPerInstance เป็น selectedInstances format
+    const selectedInstances = {};
+    for (const [deviceId] of this.instances) {
+      const friendCount = friendsPerInstance[deviceId] || friendsPerInstance.default || 0;
+      if (friendCount > 0) {
+        selectedInstances[deviceId] = { enabled: true, friendCount };
+      }
+    }
+    
+    return this.sendOnSelectedInstances(message, selectedInstances, { parallel, sendAll, speed });
+  }
+
+  pauseInstance(deviceId) {
+    const instance = this.instances.get(deviceId);
+    if (instance) {
+      instance.lineController.pause();
+      return { success: true };
+    }
+    return { success: false, error: "Instance not found" };
+  }
+
+  resumeInstance(deviceId) {
+    const instance = this.instances.get(deviceId);
+    if (instance) {
+      instance.lineController.resume();
+      return { success: true };
+    }
+    return { success: false, error: "Instance not found" };
+  }
+
+  stopInstance(deviceId) {
+    const instance = this.instances.get(deviceId);
+    if (instance) {
+      instance.lineController.stop();
+      return { success: true };
+    }
+    return { success: false, error: "Instance not found" };
+  }
+
+  resetInstance(deviceId) {
+    const instance = this.instances.get(deviceId);
+    if (instance) {
+      instance.lineController.reset();
+      return { success: true };
+    }
+    return { success: false, error: "Instance not found" };
   }
 
   pauseAll() {
@@ -341,6 +446,14 @@ class MultiInstanceManager {
       isAnyRunning,
       isAnyPaused,
     };
+  }
+
+  getInstanceStatus(deviceId) {
+    const instance = this.instances.get(deviceId);
+    if (!instance) {
+      return null;
+    }
+    return instance.lineController.getStatus();
   }
 
   saveState() {

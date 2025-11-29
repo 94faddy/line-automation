@@ -1,7 +1,6 @@
 /**
- * ADB Controller Module v3.5
+ * ADB Controller Module v4.0
  * - เรียงลำดับ instances ตาม port (5555 = #1, 5565 = #2, ...)
- * - แก้ไขปัญหาสถานะ instance แสดงสลับกัน
  * - Auto-detect เร็ว (timeout 500ms, parallel connect)
  * - กรอง duplicate instances
  */
@@ -46,17 +45,12 @@ class ADBController {
     }
   }
 
-  /**
-   * ดึงรายการ devices และกรอง duplicate ออก
-   * - เลือก 127.0.0.1:XXXX แทน emulator-XXXX
-   * - เรียงลำดับตาม port (5555, 5565, 5575, ...)
-   */
   static getDevices(adbPath) {
     try {
       const result = execSync(`"${adbPath}" devices`, { encoding: "utf8" });
       const lines = result.split("\n").filter(line => line.includes("\tdevice"));
       
-      const deviceMap = new Map(); // port -> deviceId
+      const deviceMap = new Map();
       
       for (const line of lines) {
         const [id] = line.split("\t");
@@ -66,18 +60,15 @@ class ADBController {
         let isIpFormat = false;
         
         if (deviceId.includes(":")) {
-          // Format: 127.0.0.1:5555
           port = deviceId.split(":")[1];
           isIpFormat = true;
         } else if (deviceId.startsWith("emulator-")) {
-          // Format: emulator-5554 (port จริงคือ 5554+1 = 5555)
           const emulatorPort = parseInt(deviceId.replace("emulator-", ""));
           port = String(emulatorPort + 1);
           isIpFormat = false;
         }
         
         if (port) {
-          // ถ้ามี port นี้แล้ว ให้เลือก IP format
           if (deviceMap.has(port)) {
             if (isIpFormat) {
               deviceMap.set(port, { id: deviceId, port: parseInt(port), isIpFormat });
@@ -88,16 +79,15 @@ class ADBController {
         }
       }
       
-      // แปลงเป็น array และ **เรียงตาม port**
       const devices = Array.from(deviceMap.values())
-        .sort((a, b) => a.port - b.port)  // เรียงจาก port น้อย -> มาก
+        .sort((a, b) => a.port - b.port)
         .map(d => ({
           id: d.id,
           status: "device",
           port: String(d.port)
         }));
       
-      console.log(`[ADB] Found ${devices.length} device(s):`, devices.map(d => `${d.id} (port ${d.port})`).join(", "));
+      console.log(`[ADB] Found ${devices.length} device(s):`, devices.map(d => `${d.id}`).join(", "));
       return devices;
     } catch (error) {
       console.log(`[ADB] Error getting devices: ${error.message}`);
@@ -105,18 +95,11 @@ class ADBController {
     }
   }
 
-  /**
-   * Auto-detect BlueStacks instances
-   * - เร็ว (timeout 500ms, parallel)
-   * - เรียงลำดับตาม port อัตโนมัติ
-   */
   static async autoDetectInstances(adbPath) {
     console.log("[ADB] Auto-detecting BlueStacks instances...");
     
-    // BlueStacks ports: 5555, 5565, 5575, 5585
     const possiblePorts = [5555, 5565, 5575, 5585];
     
-    // Connect แบบ parallel
     const connectPromises = possiblePorts.map(port => {
       return new Promise(resolve => {
         try {
@@ -125,10 +108,7 @@ class ADBController {
             timeout: 500,
             stdio: 'pipe'
           });
-          console.log(`[ADB] ✓ Port ${port} connected`);
-        } catch (e) {
-          // Port ไม่ได้เปิด
-        }
+        } catch (e) {}
         resolve();
       });
     });
@@ -136,9 +116,7 @@ class ADBController {
     await Promise.all(connectPromises);
     await new Promise(resolve => setTimeout(resolve, 200));
     
-    // ดึงรายการ devices (เรียงตาม port แล้ว)
     const devices = ADBController.getDevices(adbPath);
-    
     console.log(`[ADB] Total: ${devices.length} instance(s)`);
     return devices;
   }
@@ -187,10 +165,6 @@ class ADBController {
     return this.exec("shell input keyevent 279");
   }
 
-  // ============================================================
-  // TEXT INPUT
-  // ============================================================
-
   writeTextToDevice(text) {
     const base64 = Buffer.from(text, 'utf8').toString('base64');
     const writeResult = this.exec(`shell "echo '${base64}' | base64 -d > /data/local/tmp/msg.txt"`, { timeout: 5000 });
@@ -236,40 +210,31 @@ class ADBController {
       return { success: true, method: 'empty', details: 'Empty text' };
     }
 
-    if (debug) console.log(`[TYPE] Input: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}" (${text.length} chars)`);
-    if (debug) console.log(`[TYPE] Method: File + Clipper (full message)`);
+    if (debug) console.log(`[TYPE] Input: "${text.substring(0, 50)}..." (${text.length} chars)`);
     
     const writeResult = this.writeTextToDevice(text);
     if (!writeResult.success) {
-      if (debug) console.log(`[TYPE] ❌ Write to file failed: ${writeResult.error}`);
       return { success: false, method: 'file', error: writeResult.error };
     }
-    if (debug) console.log(`[TYPE] ✓ Text written to device file`);
     
     this.sleep(100);
     
     const clipResult = this.setClipboardFromFile();
     if (!clipResult.success) {
-      if (debug) console.log(`[TYPE] ❌ Clipboard from file failed: ${clipResult.error}`);
       return { success: false, method: 'file', error: clipResult.error };
     }
-    if (debug) console.log(`[TYPE] ✓ Text copied to clipboard`);
     
     this.sleep(150);
     
     const pasteResult = this.paste();
     if (!pasteResult.success) {
-      if (debug) console.log(`[TYPE] ❌ Paste failed: ${pasteResult.error}`);
       return { success: false, method: 'file', error: pasteResult.error };
     }
-    if (debug) console.log(`[TYPE] ✓ Text pasted`);
     
     this.sleep(300);
-    
     this.exec("shell rm -f /data/local/tmp/msg.txt");
 
     const elapsed = Date.now() - startTime;
-    if (debug) console.log(`[TYPE] ✓ Complete in ${elapsed}ms`);
     
     return {
       success: true,
@@ -317,10 +282,6 @@ class ADBController {
     return { success: true, hasText: false, text: '', note: 'No EditText found' };
   }
 
-  // ============================================================
-  // LINE APP CONTROL
-  // ============================================================
-
   forceStopLine(linePackage) {
     this.debug(`Force stopping ${linePackage}`);
     return this.exec(`shell am force-stop ${linePackage}`);
@@ -359,17 +320,29 @@ class ADBController {
   }
 
   isLineForeground(linePackage) {
+    // วิธีที่ 1: ตรวจสอบ visible window
     const result = this.exec("shell dumpsys window windows");
     if (result.success) {
       const lines = result.output.split('\n');
       for (const line of lines) {
-        if (line.includes('mCurrentFocus') || line.includes('mFocusedApp')) {
+        // ตรวจสอบหลาย field ไม่ใช่แค่ mCurrentFocus
+        if (line.includes('mCurrentFocus') || 
+            line.includes('mFocusedApp') || 
+            line.includes('mTopFullscreenOpaqueWindowState') ||
+            line.includes('mTopFullscreenOpaqueOrDimmingWindowState')) {
           if (line.includes(linePackage)) {
             return true;
           }
         }
       }
     }
+    
+    // วิธีที่ 2: ตรวจสอบ resumed activity
+    const actResult = this.exec("shell dumpsys activity activities | grep mResumedActivity");
+    if (actResult.success && actResult.output.includes(linePackage)) {
+      return true;
+    }
+    
     return false;
   }
 
@@ -427,26 +400,19 @@ class ADBController {
     }
 
     const xml = catResult.output;
-    
-    if (xml.includes("Friends")) {
-      console.log("[getFriendsCount] XML contains 'Friends'");
-    }
 
     const engMatch = xml.match(/text="Friends\s+(\d+)"/i);
     if (engMatch) {
-      console.log("[getFriendsCount] Matched:", engMatch[0], "Count:", engMatch[1]);
       return parseInt(engMatch[1]);
     }
 
     const thaiMatch = xml.match(/text="เพื่อน\s*(\d+)"/);
     if (thaiMatch) {
-      console.log("[getFriendsCount] Matched Thai:", thaiMatch[0]);
       return parseInt(thaiMatch[1]);
     }
 
     const rowMatch = xml.match(/home_row_title_name"[^>]*text="[A-Za-z\u0E00-\u0E7F]+\s*(\d+)"/);
     if (rowMatch) {
-      console.log("[getFriendsCount] Matched row:", rowMatch[0]);
       return parseInt(rowMatch[1]);
     }
 

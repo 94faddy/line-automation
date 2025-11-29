@@ -1,6 +1,8 @@
 /**
- * LINE Web Automation Server v3.5
- * - แก้ไขไม่ให้เรียก autoDetect ซ้ำ 2 ครั้ง
+ * LINE Web Automation Server v4.0
+ * - รองรับเลือก instance ที่ต้องการส่ง
+ * - Progress tracking แยกแต่ละ instance
+ * - State file แยกแต่ละ instance
  */
 
 require("dotenv").config();
@@ -52,6 +54,9 @@ const config = {
   },
 };
 
+// Auto-refresh interval (วินาที)
+const autoRefreshInterval = parseInt(process.env.AUTO_REFRESH_INTERVAL) || 5;
+
 // Create directories
 const dataDir = path.join(__dirname, "data");
 const logsDir = path.join(__dirname, "logs");
@@ -70,11 +75,10 @@ app.use(express.urlencoded({ extended: true }));
 
 // ==================== ROUTES ====================
 
-// หน้าแรก - ไม่ต้อง autoDetect ที่นี่ (ให้ Socket ทำแทน)
 app.get("/", async (req, res) => {
   const instances = multiManager.getInstancesInfo();
   const status = multiManager.getCombinedStatus();
-  res.render("index", { instances, status, config });
+  res.render("index", { instances, status, config, autoRefreshInterval });
 });
 
 // ==================== API: INSTANCES ====================
@@ -89,11 +93,27 @@ app.get("/api/instances/info", (req, res) => {
   res.json({ success: true, instances });
 });
 
+// API สำหรับ auto-refresh status (เบาๆ ไม่ detect ใหม่)
+app.get("/api/instances/status", async (req, res) => {
+  const instances = multiManager.getInstancesStatus();
+  res.json({ success: true, instances });
+});
+
 app.get("/api/instances/:deviceId", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
   const instance = multiManager.getInstance(deviceId);
   if (instance) {
     res.json({ success: true, info: instance.info });
+  } else {
+    res.json({ success: false, error: "Instance not found" });
+  }
+});
+
+app.get("/api/instances/:deviceId/status", (req, res) => {
+  const deviceId = decodeURIComponent(req.params.deviceId);
+  const status = multiManager.getInstanceStatus(deviceId);
+  if (status) {
+    res.json({ success: true, ...status });
   } else {
     res.json({ success: false, error: "Instance not found" });
   }
@@ -114,12 +134,13 @@ app.post("/api/instances/start-line-all", async (req, res) => {
 
 // ==================== API: SENDING ====================
 
+// ส่งไปยัง instance เดียว
 app.post("/api/instances/:deviceId/send", async (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
-  const { message, totalFriends, startFrom, limit, speed } = req.body;
+  const { message, totalFriends, startFrom, limit, speed, sendAll } = req.body;
 
-  if (!message || !totalFriends) {
-    return res.json({ success: false, error: "Missing message or totalFriends" });
+  if (!message) {
+    return res.json({ success: false, error: "Missing message" });
   }
 
   const instance = multiManager.getInstance(deviceId);
@@ -131,15 +152,38 @@ app.post("/api/instances/:deviceId/send", async (req, res) => {
     return res.json({ success: false, error: "Already running" });
   }
 
-  instance.lineController.sendToAllFriends(message, parseInt(totalFriends), {
+  instance.lineController.sendToAllFriends(message, parseInt(totalFriends) || 9999, {
     startFrom: parseInt(startFrom) || 0,
     limit: parseInt(limit) || 0,
     speed: speed || 'fast',
+    sendAll: sendAll === true || !totalFriends,
   });
 
   res.json({ success: true, message: "Started sending" });
 });
 
+// ส่งไปยัง instances ที่เลือก (API ใหม่)
+app.post("/api/send-selected", async (req, res) => {
+  const { message, selectedInstances, parallel, sendAll, speed } = req.body;
+
+  if (!message) {
+    return res.json({ success: false, error: "Missing message" });
+  }
+
+  if (!selectedInstances || Object.keys(selectedInstances).length === 0) {
+    return res.json({ success: false, error: "No instances selected" });
+  }
+
+  multiManager.sendOnSelectedInstances(message, selectedInstances, {
+    parallel: parallel !== false,
+    sendAll: sendAll === true,
+    speed: speed || 'fast',
+  });
+
+  res.json({ success: true, message: "Started multi-instance sending" });
+});
+
+// Legacy API (backward compatibility)
 app.post("/api/send-all", async (req, res) => {
   const { message, friendsPerInstance, parallel, sendAll, speed } = req.body;
 
@@ -156,51 +200,33 @@ app.post("/api/send-all", async (req, res) => {
   res.json({ success: true, message: "Started multi-instance sending" });
 });
 
-// ==================== API: CONTROL ====================
+// ==================== API: CONTROL (Per Instance) ====================
 
 app.post("/api/instances/:deviceId/pause", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
-  const instance = multiManager.getInstance(deviceId);
-  if (instance) {
-    instance.lineController.pause();
-    res.json({ success: true });
-  } else {
-    res.json({ success: false, error: "Instance not found" });
-  }
+  const result = multiManager.pauseInstance(deviceId);
+  res.json(result);
 });
 
 app.post("/api/instances/:deviceId/resume", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
-  const instance = multiManager.getInstance(deviceId);
-  if (instance) {
-    instance.lineController.resume();
-    res.json({ success: true });
-  } else {
-    res.json({ success: false, error: "Instance not found" });
-  }
+  const result = multiManager.resumeInstance(deviceId);
+  res.json(result);
 });
 
 app.post("/api/instances/:deviceId/stop", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
-  const instance = multiManager.getInstance(deviceId);
-  if (instance) {
-    instance.lineController.stop();
-    res.json({ success: true });
-  } else {
-    res.json({ success: false, error: "Instance not found" });
-  }
+  const result = multiManager.stopInstance(deviceId);
+  res.json(result);
 });
 
 app.post("/api/instances/:deviceId/reset", (req, res) => {
   const deviceId = decodeURIComponent(req.params.deviceId);
-  const instance = multiManager.getInstance(deviceId);
-  if (instance) {
-    instance.lineController.reset();
-    res.json({ success: true });
-  } else {
-    res.json({ success: false, error: "Instance not found" });
-  }
+  const result = multiManager.resetInstance(deviceId);
+  res.json(result);
 });
+
+// ==================== API: CONTROL (All Instances) ====================
 
 app.post("/api/pause-all", (req, res) => {
   multiManager.pauseAll();
@@ -227,17 +253,6 @@ app.post("/api/reset-all", (req, res) => {
 app.get("/api/status", (req, res) => {
   const status = multiManager.getCombinedStatus();
   res.json({ success: true, ...status });
-});
-
-app.get("/api/instances/:deviceId/status", (req, res) => {
-  const deviceId = decodeURIComponent(req.params.deviceId);
-  const instance = multiManager.getInstance(deviceId);
-  if (instance) {
-    const status = instance.lineController.getStatus();
-    res.json({ success: true, ...status });
-  } else {
-    res.json({ success: false, error: "Instance not found" });
-  }
 });
 
 // ==================== API: SAVED STATE ====================
@@ -288,7 +303,6 @@ app.get("/api/logs", (req, res) => {
 io.on("connection", async (socket) => {
   console.log("Client connected");
 
-  // Auto-detect เมื่อ client connect (ครั้งเดียว)
   const instances = await multiManager.autoDetect();
   const status = multiManager.getCombinedStatus();
   
@@ -305,6 +319,14 @@ io.on("connection", async (socket) => {
     const instances = await multiManager.autoDetect();
     socket.emit("instances", instances);
   });
+  
+  // Auto-refresh status (เบาๆ ไม่ detect ใหม่)
+  socket.on("refresh-status", () => {
+    const now = new Date().toLocaleTimeString();
+    console.log(`[${now}] refresh-status requested (interval: ${autoRefreshInterval}s)`);
+    const instances = multiManager.getInstancesStatus();
+    socket.emit("status-update", { instances });
+  });
 });
 
 // ==================== START SERVER ====================
@@ -313,15 +335,15 @@ server.listen(config.port, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║     LINE Web Automation v3.5                                  ║
+║     LINE Web Automation v4.0                                  ║
 ║     ─────────────────────────────────────────                 ║
 ║     Server running at http://${config.host}:${config.port}                  ║
 ║                                                               ║
-║     Features:                                                 ║
-║     • รองรับ ภาษาไทย / Emoji / URL (via Clipper)              ║
-║     • Auto-detect BlueStacks instances                        ║
-║     • เรียง instance ตาม port (5555=#1, 5565=#2)              ║
-║     • ปรับความเร็วได้ (Normal/Fast/Turbo)                     ║
+║     New Features:                                             ║
+║     • เลือก instance ที่ต้องการส่งได้                          ║
+║     • Progress bar แยกแต่ละ instance                          ║
+║     • State file แยกแต่ละ instance                            ║
+║     • ควบคุมแต่ละ instance แยกกันได้                          ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
